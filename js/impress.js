@@ -96,6 +96,7 @@ const Impress = (() => {
     };
     const sep = () => { const s=document.createElement('span'); s.className='tb-sep'; return s; };
 
+    tb.appendChild(btn('📂 Open', openPresentation, 'Open .pptx or .json'));
     tb.appendChild(btn('＋ Slide', addSlide, 'Add slide'));
     tb.appendChild(btn('Duplicate', () => duplicateSlide(current), 'Duplicate current'));
     tb.appendChild(sep());
@@ -113,7 +114,8 @@ const Impress = (() => {
     tb.appendChild(bg);
     tb.appendChild(sep());
     tb.appendChild(btn('▶ Present', startPresent, 'Present (Esc to exit)', true));
-    tb.appendChild(btn('💾 Export ▾', exportMenu, 'Export'));
+    tb.appendChild(btn('💾 Save', saveJson, 'Save deck (.json) — re-openable later'));
+    tb.appendChild(btn('📥 Export ▾', exportMenu, 'Export to .pptx or .pdf'));
   }
 
   // ---------- Slide list (thumbnails) ----------
@@ -406,6 +408,259 @@ const Impress = (() => {
     return 'data:' + mime + ';base64,' + btoa(bin);
   }
 
+  // ---------- Open / import ----------
+  // EMU (English Metric Units): 914400 per inch. Slide is 13.333" x 7.5" (16:9).
+  const EMU_W = 12192000;   // 13.333 * 914400
+  const EMU_H = 6858000;    // 7.5 * 914400
+  const tag = (ns, local) => new RegExp('^[a-z]+:' + local + '$').test(ns);
+
+  async function openPresentation() {
+    try {
+      const f = await FS.open({
+        accept: [
+          { description: 'Presentation', accept: {
+            'application/vnd.openxmlformats-officedocument.presentationml.presentation': ['.pptx'],
+            'application/json': ['.json'],
+          } },
+        ],
+      });
+      const ext = (f.name.split('.').pop() || '').toLowerCase();
+      if (ext === 'json') return openJson(f);
+      if (ext === 'pptx') return openPptx(f);
+      UI.toast('Unsupported file type', 'warn');
+    } catch (e) {
+      if (e.name !== 'AbortError') UI.toast('Open failed: ' + (e.message || e), 'error');
+    }
+  }
+
+  async function openJson(f) {
+    try {
+      const text = await f.text();
+      const data = JSON.parse(text);
+      if (!data || !Array.isArray(data.slides)) throw new Error('Not a PocketOffice deck');
+      slides = data.slides;
+      current = 0;
+      selected = null;
+      // Renumber element ids so they don't collide
+      seq = 1;
+      slides.forEach(s => (s.elements || []).forEach(el => (el.id = 'e' + (seq++))));
+      renderSlideList();
+      renderCanvas();
+      markDirty();
+      UI.toast(`Opened ${f.name} (${slides.length} slides)`, 'success');
+    } catch (e) {
+      UI.toast('Could not read deck: ' + (e.message || e), 'error');
+    }
+  }
+
+  async function openPptx(f) {
+    if (typeof window.JSZip === 'undefined') { UI.toast('JSZip not loaded', 'error'); return; }
+    UI.toast(`Opening ${f.name}…`, 'info');
+    try {
+      const zip = await window.JSZip.loadAsync(f.bytes);
+      // Find all slide XML files and sort by slide number.
+      const slideFiles = Object.keys(zip.files)
+        .filter(n => /ppt\/slides\/slide\d+\.xml$/.test(n))
+        .sort((a, b) => {
+          const na = +a.match(/slide(\d+)\.xml/)[1];
+          const nb = +b.match(/slide(\d+)\.xml/)[1];
+          return na - nb;
+        });
+      if (!slideFiles.length) { UI.toast('No slides found in file', 'warn'); return; }
+
+      // Build a relationship map for each slide (to resolve images).
+      const slideRels = {};
+      for (const sf of slideFiles) {
+        const num = sf.match(/slide(\d+)\.xml/)[1];
+        const relPath = `ppt/slides/_rels/slide${num}.xml.rels`;
+        const relFile = zip.file(relPath);
+        if (relFile) {
+          const relXml = await relFile.async('string');
+          const map = {};
+          // Each Relationship: <Relationship Id="rId1" Target="media/image1.png"/>
+          const re = /<Relationship\s+Id="([^"]+)"\s+Type="[^"]*"\s+Target="([^"]+)"/g;
+          let m;
+          while ((m = re.exec(relXml))) map[m[1]] = m[2];
+          slideRels[num] = map;
+        }
+      }
+
+      const parser = new DOMParser();
+      const newSlides = [];
+      for (const sf of slideFiles) {
+        const xml = await zip.file(sf).async('string');
+        const doc = parser.parseFromString(xml, 'application/xml');
+        newSlides.push(parseSlide(doc, zip, slideRels[sf.match(/slide(\d+)/)[1]] || {}));
+      }
+      // Second pass: resolve image placeholders (need async reads).
+      for (const s of newSlides) {
+        for (const el of (s.elements || [])) {
+          if (el.kind === 'image' && el._imgTarget) {
+            try {
+              const imgFile = zip.file(el._imgTarget);
+              if (imgFile) {
+                const bytes = new Uint8Array(await imgFile.async('uint8array'));
+                const ext = (el._imgTarget.split('.').pop() || 'png').toLowerCase();
+                el.dataUrl = bytesToBase64(bytes, 'image.' + ext);
+              }
+            } catch (e) { /* skip unreadable image */ }
+            delete el._imgTarget;
+          }
+        }
+      }
+      slides = newSlides;
+      current = 0;
+      selected = null;
+      seq = 1;
+      slides.forEach(s => (s.elements || []).forEach(el => (el.id = 'e' + (seq++))));
+      renderSlideList();
+      renderCanvas();
+      markDirty();
+      const skipped = slides.reduce((n, s) => n + (s.elements || []).filter(e => e._unsupported).length, 0);
+      UI.toast(`Imported ${slides.length} slide${slides.length === 1 ? '' : 's'}${skipped ? ` (${skipped} item${skipped===1?'':'s'} skipped)` : ''}`, 'success');
+    } catch (e) {
+      UI.toast(`Could not read ${f.name}: ${e.message || e}`, 'error');
+    }
+  }
+
+  function parseSlide(doc, zip, rels) {
+    const slide = { bg: '#ffffff', elements: [] };
+    // Manual walk of the namespaced XML (CSS selectors don't work well with namespaces).
+    const find = (root, names) => {
+      // names is an array of local-names; descend matching any-namespace.
+      let node = root;
+      for (const ln of names) {
+        let next = null;
+        for (const c of node.children) {
+          if (c.localName === ln) { next = c; break; }
+        }
+        if (!next) return null;
+        node = next;
+      }
+      return node;
+    };
+    const findAll = (root, ln) => {
+      const out = [];
+      const walk = (n) => { for (const c of n.children) { if (c.localName === ln) out.push(c); walk(c); } };
+      walk(root);
+      return out;
+    };
+    const attr = (el, name) => el ? el.getAttribute(name) : null;
+
+    // Background: p:cSld/p:bg/p:bgPr/a:solidFill/a:srgbClr@val
+    const bgClrEl = find(doc.documentElement, ['cSld','bg','bgPr','solidFill','srgbClr']);
+    if (bgClrEl) slide.bg = '#' + attr(bgClrEl, 'val');
+
+    // Shapes: every p:sp and p:pic in the spTree
+    const spTree = find(doc.documentElement, ['cSld','spTree']);
+    if (!spTree) return slide;
+    for (const sp of findAll(spTree, 'sp').concat(findAll(spTree, 'pic'))) {
+      const el = parseShape(sp, find, findAll, attr, rels, zip);
+      if (el) slide.elements.push(el);
+    }
+    return slide;
+  }
+
+  function parseShape(sp, find, findAll, attr, rels, zip) {
+    const isPic = sp.localName === 'pic';
+    // Position + size from a:xfrm/a:off and a:ext (EMU). Some pics store it in pic/xfrm.
+    const off = find(sp, ['spPr','xfrm','off']) || find(sp, ['xfrm','off']);
+    const ext = find(sp, ['spPr','xfrm','ext']) || find(sp, ['xfrm','ext']);
+    if (!off || !ext) return null;
+    const x = +attr(off, 'x'), y = +attr(off, 'y');
+    const cx = +attr(ext, 'cx'), cy = +attr(ext, 'cy');
+    if (!cx || !cy) return null;
+    const xp = x / EMU_W * 100, yp = y / EMU_H * 100;
+    const wp = cx / EMU_W * 100, hp = cy / EMU_H * 100;
+
+    // Image (p:pic): resolve via blip embed relationship
+    if (isPic) {
+      const blip = find(sp, ['blipFill','blip']);
+      const embed = blip ? attr(blip, 'embed') : null;
+      if (embed && rels[embed]) {
+        const target = rels[embed].replace(/^\.\.\//, 'ppt/');
+        const imgFile = zip.file(target);
+        if (imgFile) {
+          // We can't await inside this sync parser easily; resolve bytes synchronously via base64.
+          // JSZip.file(...).async is async, but we can mark this element and resolve later.
+          // Simpler: read as base64 here using the sync internals is not safe; instead push a
+          // placeholder and resolve in a second pass. For now, read via async wrapper below.
+          return { kind: 'image', x: xp, y: yp, w: wp, h: hp, _imgTarget: target };
+        }
+      }
+      return null;
+    }
+
+    // Shape geometry from a:prstGeom prst
+    const geom = find(sp, ['spPr','prstGeom']);
+    const prst = geom ? attr(geom, 'prst') : 'rect';
+    // Fill color
+    const fillClr = find(sp, ['spPr','solidFill','srgbClr']);
+    const fill = fillClr ? '#' + attr(fillClr, 'val') : null;
+    const noFill = find(sp, ['spPr','noFill']);
+
+    // Text body
+    const txBody = find(sp, ['txBody']);
+    let text = '', fontSize = 18, bold = false, italic = false, color = '#222222', align = 'left';
+    if (txBody) {
+      // Concatenate all <a:t> runs, joining paragraphs with \n
+      const paras = findAll(txBody, 'p');
+      const paraTexts = [];
+      for (const p of paras) {
+        const runs = findAll(p, 'r');
+        let para = '';
+        let firstRunFmt = null;
+        for (const r of runs) {
+          const t = find(r, ['t']);
+          if (t) para += t.textContent;
+          if (!firstRunFmt) {
+            const rPr = find(r, ['rPr']);
+            if (rPr) firstRunFmt = rPr;
+          }
+        }
+        paraTexts.push(para);
+        // Alignment from p:pPr@algn (first paragraph wins)
+        const pPr = find(p, ['pPr']);
+        if (pPr && paraTexts.length === 1) {
+          const a = attr(pPr, 'algn');
+          if (a === 'ctr') align = 'center';
+          else if (a === 'r') align = 'right';
+        }
+      }
+      text = paraTexts.join('\n');
+      // Formatting from the first run's rPr
+      const firstP = paras[0];
+      if (firstP) {
+        const firstR = find(firstP, ['r']);
+        if (firstR) {
+          const rPr = find(firstR, ['rPr']);
+          if (rPr) {
+            const sz = attr(rPr, 'sz');        // half-points
+            if (sz) fontSize = Math.round(+sz / 100);
+            if (attr(rPr, 'b') === '1') bold = true;
+            if (attr(rPr, 'i') === '1') italic = true;
+            const clrEl = find(rPr, ['solidFill','srgbClr']);
+            if (clrEl) color = '#' + attr(clrEl, 'val');
+          }
+        }
+      }
+    }
+
+    // Decide kind: ellipse/circle vs rectangle vs text box
+    let kind = 'rect';
+    if (prst === 'ellipse' || prst === 'ellipse') kind = 'ellipse';
+
+    // If there is text and no explicit fill shape geometry, treat as a text box.
+    if (text && (noFill || !fill)) {
+      return { kind: 'text', x: xp, y: yp, w: wp, h: hp, text, fontSize, bold, italic, color, align };
+    }
+    if (text) {
+      // A filled shape with text inside — keep as shape but carry the text.
+      return { kind, x: xp, y: yp, w: wp, h: hp, fill: fill || '#4a90e2', text, fontSize, bold, italic, color, align };
+    }
+    return { kind, x: xp, y: yp, w: wp, h: hp, fill: fill || '#4a90e2' };
+  }
+
   // ---------- Slide operations ----------
   function addSlide() {
     slides.splice(current + 1, 0, { bg: '#ffffff', elements: [] });
@@ -494,6 +749,38 @@ const Impress = (() => {
       d.style.background = `url(${el.dataUrl}) center/cover`;
     }
     return d;
+  }
+
+  // ---------- Save (PocketOffice's own .json — fully re-editable) ----------
+  async function saveJson() {
+    try {
+      // Strip transient fields, keep only editable props.
+      const clean = slides.map(s => ({
+        bg: s.bg || '#ffffff',
+        elements: (s.elements || []).map(el => {
+          const e = { id: el.id, kind: el.kind, x: el.x, y: el.y, w: el.w, h: el.h };
+          if (el.text != null) e.text = el.text;
+          if (el.fontSize != null) e.fontSize = el.fontSize;
+          if (el.bold) e.bold = true;
+          if (el.italic) e.italic = true;
+          if (el.color) e.color = el.color;
+          if (el.fill) e.fill = el.fill;
+          if (el.align) e.align = el.align;
+          if (el.dataUrl) e.dataUrl = el.dataUrl;
+          return e;
+        }),
+      }));
+      const bytes = new TextEncoder().encode(JSON.stringify({ slides: clean }, null, 2));
+      await FS.save({
+        name: 'presentation.json',
+        mime: 'application/json',
+        bytes,
+        handle: null,
+      });
+      UI.toast('Saved presentation.json (re-openable in Impress)', 'success');
+    } catch (e) {
+      if (e.name !== 'AbortError') UI.toast('Save failed: ' + (e.message || e), 'error');
+    }
   }
 
   // ---------- Export ----------
