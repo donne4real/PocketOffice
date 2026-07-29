@@ -1,0 +1,23 @@
+# OS clutter
+.DS_Store
+Thumbs.db
+desktop.ini
+ehthumbs.db
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Build artifacts (the standalone single-file build is generated, not source)
+PocketOffice-standalone.html
+_*.js
+_*.html
+
+# Distribution archives (built from source, not tracked)
+*.zip
+
+# Logs
+*.log

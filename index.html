@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PocketOffice</title>
+  <link rel="stylesheet" href="css/app.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- ====================== APP TAB STRIP ====================== -->
+    <header class="app-tabs">
+      <div class="brand">
+        <div class="brand-logo">P</div>
+        <div class="brand-name">PocketOffice</div>
+      </div>
+
+      <button class="app-tab" data-app="writer"><span class="ico">📝</span>Writer</button>
+      <button class="app-tab" data-app="calc"><span class="ico">📊</span>Calc</button>
+      <button class="app-tab" data-app="impress"><span class="ico">📽️</span>Impress</button>
+      <button class="app-tab active" data-app="text"><span class="ico">📄</span>Text Editor</button>
+      <button class="app-tab" data-app="pdf"><span class="ico">📕</span>PDF Tools</button>
+
+      <div class="tab-spacer"></div>
+      <button class="icon-btn" id="themeToggle" title="Toggle dark mode">🌙</button>
+      <button class="icon-btn" id="aboutBtn" title="About">ⓘ</button>
+    </header>
+
+    <main class="workspace">
+      <!-- ====================== WRITER ====================== -->
+      <section class="tool-panel" data-app="writer">
+        <div class="toolbar" id="writerToolbar"><!-- built by word.js --></div>
+        <div class="writer-surface" id="writerContent"></div>
+      </section>
+
+      <!-- ====================== CALC ====================== -->
+      <section class="tool-panel" data-app="calc">
+        <div class="toolbar" id="calcToolbar"><!-- built by calc.js --></div>
+        <div class="calc-wrap">
+          <div class="calc-content" id="calcContent"></div>
+        </div>
+      </section>
+
+      <!-- ====================== IMPRESS ====================== -->
+      <section class="tool-panel" data-app="impress">
+        <div class="toolbar" id="impressToolbar"><!-- built by impress.js --></div>
+        <div class="impress-wrap" id="impressContent"></div>
+      </section>
+
+      <!-- ====================== TEXT EDITOR ====================== -->
+      <section class="tool-panel active" data-app="text">
+        <div class="toolbar" id="teToolbar">
+          <button class="tb-btn" id="teNew">＋ New</button>
+          <button class="tb-btn" id="teOpen">📂 Open…</button>
+          <button class="tb-btn primary" id="teSave">💾 Save</button>
+          <button class="tb-btn" id="teSaveAs">Save As…</button>
+          <span class="tb-sep"></span>
+          <span class="tb-label">Mode</span>
+          <select class="tb-select" id="teMode">
+            <option value="txt">Plain text (.txt)</option>
+            <option value="md">Markdown (.md)</option>
+            <option value="json">JSON (.json)</option>
+            <option value="js">JavaScript (.js)</option>
+            <option value="csv">CSV (.csv)</option>
+            <option value="html">HTML (.html)</option>
+            <option value="log">Log (.log)</option>
+            <option value="ini">Config (.ini)</option>
+          </select>
+          <span class="tb-sep"></span>
+          <button class="tb-btn" id="teFind">🔍 Find</button>
+          <button class="tb-btn" id="teWordWrap" title="Toggle word wrap">↩ Wrap</button>
+        </div>
+        <div class="te-find" id="teFindBar">
+          <input type="text" id="teFindInput" placeholder="Find…" style="width:220px" />
+          <button class="tb-btn" id="teFindPrev">↑</button>
+          <button class="tb-btn" id="teFindNext">↓</button>
+          <span class="tb-label" id="teFindCount"></span>
+          <span style="flex:1"></span>
+          <button class="icon-btn" id="teFindClose">✕</button>
+        </div>
+        <div class="te-wrap">
+          <div class="te-tabs" id="teTabs"></div>
+          <div class="te-editor">
+            <div class="te-gutter" id="teGutter"></div>
+            <textarea class="te-textarea" id="teTextarea" spellcheck="false" wrap="off"></textarea>
+          </div>
+        </div>
+      </section>
+
+      <!-- ====================== PDF TOOLS ====================== -->
+      <section class="tool-panel" data-app="pdf">
+        <div class="toolbar" id="pdfToolbar">
+          <button class="tb-btn primary" id="pdfOpen">📂 Open PDF…</button>
+          <button class="tb-btn ghost" id="pdfClose" style="display:none">✕ Close</button>
+          <span class="tb-sep"></span>
+          <span class="tb-label" id="pdfDocName" style="display:none"></span>
+          <span class="tb-sep" id="pdfNavSep" style="display:none"></span>
+          <button class="tb-btn icon-only" id="pdfPrev" style="display:none" title="First page">⏮</button>
+          <span class="tb-label" id="pdfPageInfo" style="display:none"></span>
+          <button class="tb-btn icon-only" id="pdfNext" style="display:none" title="Last page">⏭</button>
+          <span class="tb-sep" id="pdfZoomSep" style="display:none"></span>
+          <button class="tb-btn icon-only" id="pdfZoomOut" style="display:none" title="Zoom out">−</button>
+          <span class="tb-label" id="pdfZoomInfo" style="display:none">120%</span>
+          <button class="tb-btn icon-only" id="pdfZoomIn" style="display:none" title="Zoom in">+</button>
+          <span class="tb-sep" id="pdfSep2" style="display:none"></span>
+          <button class="tb-btn" id="pdfMergeBtn" title="Merge multiple PDFs into one">🔗 Merge</button>
+          <button class="tb-btn" id="pdfSplitBtn" style="display:none" title="Extract page range">✂ Split</button>
+          <button class="tb-btn" id="pdfRotateBtn" style="display:none" title="Rotate first page">⟳ Rotate</button>
+          <button class="tb-btn" id="pdfDeleteBtn" style="display:none" title="Delete a page">🗑 Delete</button>
+          <button class="tb-btn" id="pdfTextBtn" style="display:none" title="Add text">T Text</button>
+          <button class="tb-btn" id="pdfSignBtn" style="display:none" title="Sign by drawing">✍ Sign</button>
+          <button class="tb-btn primary" id="pdfSaveBtn" style="display:none">💾 Save</button>
+          <span style="flex:1"></span>
+          <span class="tb-label muted" id="pdfHint">100% offline · merge / split / reorder / annotate / sign</span>
+        </div>
+        <div class="pdf-wrap">
+          <div class="pdf-canvas-area" id="pdfCanvasArea">
+            <div class="center-panel" id="pdfEmpty">
+              <div class="empty-state">
+                <h2>📕 PDF Tools</h2>
+                <p>Open a PDF to view, reorder, rotate, delete, and annotate pages — or merge multiple PDFs. Sign by drawing. Everything runs locally; no upload.</p>
+                <div class="big-btns">
+                  <button class="tb-btn primary" onclick="document.getElementById('pdfOpen').click()">📂 Open a PDF</button>
+                  <button class="tb-btn" onclick="document.getElementById('pdfMergeBtn').click()">🔗 Merge PDFs</button>
+                </div>
+                <p class="muted small" style="margin-top:14px">Honest limitation: editing existing text inside a PDF (rewriting words already in the file) isn't supported — even LibreOffice struggles with that. You can add text, signatures, images, and restructure pages freely.</p>
+              </div>
+            </div>
+            <div id="pdfPages" style="display:none; flex-direction:column; align-items:center; gap:14px;"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- ====================== STATUS BAR ====================== -->
+    <footer class="statusbar">
+      <span id="statusApp">Text Editor</span>
+      <span id="statusInfo"></span>
+      <span class="spacer"></span>
+      <span id="statusAutosave" class="muted"></span>
+      <span class="muted">v1.0 · 2026-07-28 · 100% offline</span>
+    </footer>
+  </div>
+
+  <div id="toasts"></div>
+  <div id="dialogRoot"></div>
+
+  <!-- ====================== VENDORED LIBRARIES (all offline) ====================== -->
+  <script src="lib/pdf.min.js"></script>
+  <script src="lib/pdf-lib.min.js"></script>
+  <script src="lib/jspdf.umd.min.js"></script>
+  <script src="lib/xlsx.full.min.js"></script>
+  <script src="lib/docx.umd.js"></script>
+  <script src="lib/mammoth.browser.js"></script>   <!-- reads existing .docx -->
+  <script src="lib/jszip.min.js"></script>     <!-- required by pptxgenjs -->
+  <script src="lib/pptxgenjs.min.js"></script>
+
+  <!-- ====================== APP CODE ====================== -->
+  <script src="js/storage.js"></script>
+  <script src="js/texteditor.js"></script>
+  <script src="js/word.js"></script>
+  <script src="js/calc.js"></script>
+  <script src="js/impress.js"></script>
+  <script src="js/pdftools.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
