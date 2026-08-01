@@ -45,13 +45,17 @@ const Writer = (() => {
       btn('💾 Save', 'save', 'Save (Ctrl+S)'),
       btn('Save As…', 'saveas', 'Save As…'),
       btn('Export ▾', 'export', 'Export to .docx / .pdf', { iconOnly: false }),
+      btn('🖨️', 'print', 'Print'),
     ]);
 
     // Undo/redo
-    group([
-      btn('↶', 'undo', 'Undo'),
-      btn('↷', 'redo', 'Redo'),
-    ]);
+    const undoBtn = document.createElement('button');
+    undoBtn.className = 'tb-btn icon-only'; undoBtn.innerHTML = '↶'; undoBtn.title = 'Undo (Ctrl+Z)';
+    undoBtn.onclick = () => { editor.focus(); doUndo(); };
+    const redoBtn = document.createElement('button');
+    redoBtn.className = 'tb-btn icon-only'; redoBtn.innerHTML = '↷'; redoBtn.title = 'Redo (Ctrl+Y)';
+    redoBtn.onclick = () => { editor.focus(); doRedo(); };
+    group([undoBtn, redoBtn]);
 
     // Font + size
     const fontSel = document.createElement('select');
@@ -139,6 +143,7 @@ const Writer = (() => {
       case 'save':       return saveDoc(false);
       case 'saveas':     return saveDoc(true);
       case 'export':     return exportMenu();
+      case 'print':      return window.print();
       case 'find':       return findReplace();
       case 'foreColor': {
         const c = await pickColor('Text color'); if (c) exec('foreColor', c); return;
@@ -151,8 +156,32 @@ const Writer = (() => {
         if (url) exec('createLink', url); return;
       }
       case 'insertImage': {
-        const src = await UI.prompt({ title: 'Insert image', label: 'Image URL or data:', value: '' });
-        if (src) exec('insertImage', src); return;
+        // Offer file-from-disk (default) or URL. The disk path uses the shared
+        // FS picker + Util.bytesToBase64 to produce a data URL.
+        const body = document.createElement('div');
+        body.style.cssText = 'min-width:320px';
+        body.innerHTML = `
+          <p class="muted" style="margin:0 0 12px">Insert an image from your computer or by URL.</p>
+          <div style="display:flex;gap:8px">
+            <button class="tb-btn primary" id="imgFile" style="flex:1">📂 From file…</button>
+            <button class="tb-btn" id="imgUrl" style="flex:1">🔗 From URL…</button>
+          </div>`;
+        const d = UI.dialog({ title: 'Insert image', body, okText: 'Cancel', cancelText: null });
+        d.el.querySelector('[data-act=ok]').textContent = 'Close';
+        d.el.querySelector('#imgFile').onclick = async () => {
+          d.close();
+          try {
+            const f = await FS.open({ accept: [{ description: 'Image', accept: { 'image/png': ['.png'], 'image/jpeg': ['.jpg', '.jpeg'], 'image/gif': ['.gif'], 'image/webp': ['.webp'] } }] });
+            const dataUrl = Util.bytesToBase64(f.bytes, f.name);
+            exec('insertImage', dataUrl);
+          } catch (e) { if (e.name !== 'AbortError') UI.toast('Image failed: ' + e.message, 'error'); }
+        };
+        d.el.querySelector('#imgUrl').onclick = async () => {
+          d.close();
+          const url = await UI.prompt({ title: 'Insert image from URL', label: 'URL', value: 'https://' });
+          if (url) exec('insertImage', url);
+        };
+        return;
       }
       case 'insertTable': return insertTable();
       default:
@@ -162,6 +191,11 @@ const Writer = (() => {
 
   function exec(cmd, value) {
     editor.focus();
+    // Snapshot before formatting actions so each is one undo entry.
+    if (cmd !== 'undo' && cmd !== 'redo') {
+      History.snapshot('writer', editor.innerHTML, (html) => { editor.innerHTML = html; markDirty(); });
+      undoArmed = false;
+    }
     // Some browsers want styleWithCSS on for color/hilite.
     try { document.execCommand('styleWithCSS', false, (cmd === 'foreColor' || cmd === 'hiliteColor') + ''); } catch (e) {}
     document.execCommand(cmd, false, value === undefined ? null : value);
@@ -318,6 +352,7 @@ const Writer = (() => {
       dirty = false;
       updateName();
       autosaveSoon();
+      History.reset('writer');
       UI.toast(`Opened ${f.name}`, 'success');
     } catch (e) {
       if (e.name !== 'AbortError') UI.toast('Open failed: ' + e.message, 'error');
@@ -342,6 +377,7 @@ const Writer = (() => {
       dirty = false;
       updateName();
       autosaveSoon();
+      History.reset('writer');
       const warns = (result.messages || []).filter(m => m.type === 'warning').length;
       UI.toast(`Opened ${f.name}${warns ? ` (${warns} formatting hints skipped)` : ''}`, 'success');
     } catch (e) {
@@ -562,6 +598,25 @@ const Writer = (() => {
     await FS.save({ name: base + '.docx', mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', bytes: buf, handle: null });
   }
 
+  // ----- Undo -----
+  // Debounced innerHTML snapshots: typing produces many input events, so we
+  // coalesce them into one undo entry per ~600ms pause.
+  let undoTimer = null;
+  let undoArmed = false;
+  function armSnapshot() {
+    if (undoArmed) return;
+    undoArmed = true;
+    const snap = editor.innerHTML;
+    History.snapshot('writer', snap, (html) => { editor.innerHTML = html; markDirty(); });
+  }
+  function scheduleSnapshot() {
+    clearTimeout(undoTimer);
+    undoTimer = setTimeout(() => { undoArmed = false; }, 600);
+    armSnapshot();
+  }
+  function doUndo() { History.undo('writer'); }
+  function doRedo() { History.redo('writer'); }
+
   // ----- Dirty + autosave -----
   function markDirty() {
     if (!dirty) { dirty = true; updateName(); }
@@ -624,7 +679,13 @@ const Writer = (() => {
 
     buildToolbar();
 
-    editor.addEventListener('input', markDirty);
+    // Register undo: capture + restore current innerHTML.
+    History.registerCurrentSnapshot('writer',
+      () => editor.innerHTML,
+      (html) => { editor.innerHTML = html; markDirty(); });
+    History.reset('writer');
+
+    editor.addEventListener('input', () => { scheduleSnapshot(); markDirty(); });
     editor.addEventListener('keyup', updateToolbarState);
     editor.addEventListener('mouseup', updateToolbarState);
 
@@ -642,6 +703,7 @@ const Writer = (() => {
         editor.innerHTML = saved.html;
         if (saved.name) { docName = saved.name; }
         updateName();
+        History.reset('writer');
       }
     } catch (e) { /* ignore */ }
     updateStatus();

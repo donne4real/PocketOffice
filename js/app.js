@@ -67,6 +67,25 @@
   }
 
   // ---- Global keyboard shortcuts ----
+  // Map app name -> History stack key (Text Editor is special: per-buffer).
+  function undoKeyFor(app) {
+    if (app === 'text') {
+      // TextEditor exposes undo/redo that already know the active buffer key.
+      return null;
+    }
+    return app;   // 'writer', 'calc', 'impress', 'pdf' match the stack keys
+  }
+  function doUndoRedo(which) {
+    if (currentApp === 'text') {
+      if (which === 'undo' && TextEditor.undo) return TextEditor.undo();
+      if (which === 'redo' && TextEditor.redo) return TextEditor.redo();
+    }
+    const key = undoKeyFor(currentApp);
+    if (!key) return;
+    if (which === 'undo') History.undo(key);
+    else History.redo(key);
+  }
+
   function wireShortcuts() {
     document.addEventListener('keydown', (e) => {
       // Ignore when typing in an input/textarea (except for tool-specific ones handled there)
@@ -81,6 +100,21 @@
       // Ctrl/Cmd+Shift+T toggles theme
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 't') {
         e.preventDefault(); toggleTheme();
+      }
+      // Ctrl+Z / Ctrl+Y (or Ctrl+Shift+Z) undo/redo — only in the active tool,
+      // and only when the focus is in the document area (not a toolbar input).
+      if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+        const k = e.key.toLowerCase();
+        if (k === 'z' && !e.shiftKey) {
+          // Don't hijack native undo in contentEditable (Writer) — it has its own
+          // JS history now, so we DO want to intercept. But avoid stealing it from
+          // text inputs that the tool manages internally (formula bar, etc.).
+          if (tag === 'input' || tag === 'select') return;
+          e.preventDefault(); doUndoRedo('undo');
+        } else if (k === 'y' || (k === 'z' && e.shiftKey)) {
+          if (tag === 'input' || tag === 'select') return;
+          e.preventDefault(); doUndoRedo('redo');
+        }
       }
     });
   }

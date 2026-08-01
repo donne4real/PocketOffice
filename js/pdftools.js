@@ -28,7 +28,8 @@ const PdfTools = (() => {
 
   function setControlsVisible(v) {
     for (const id of ['pdfClose','pdfNavSep','pdfPrev','pdfPageInfo','pdfNext','pdfZoomSep','pdfZoomOut','pdfZoomInfo','pdfZoomIn',
-                      'pdfMergeBtn','pdfSplitBtn','pdfRotateBtn','pdfDeleteBtn','pdfTextBtn','pdfSignBtn','pdfSaveBtn','pdfSep2']) {
+                      'pdfMergeBtn','pdfSplitBtn','pdfRotateBtn','pdfDeleteBtn','pdfTextBtn','pdfSignBtn','pdfSaveBtn','pdfSep2',
+                      'pdfUndoBtn','pdfRedoBtn']) {
       const el = $(id); if (el) el.style.display = v ? '' : 'none';
     }
     const empty = $('pdfEmpty'); if (empty) empty.style.display = v ? 'none' : '';
@@ -63,6 +64,7 @@ const PdfTools = (() => {
     setControlsVisible(true);
     await renderAll();
     updatePageInfo();
+    History.reset('pdf');
   }
 
   function closeDoc() {
@@ -70,6 +72,7 @@ const PdfTools = (() => {
     for (const k of Object.keys(overlays)) delete overlays[k];
     setControlsVisible(false);
     $('pdfPages').innerHTML = '';
+    History.reset('pdf');
   }
 
   // ---- Render ----
@@ -158,18 +161,34 @@ const PdfTools = (() => {
   function pageHeightPt() { return 792; }
 
   // ---- Page operations (mutate pageOrder / overlays; re-render) ----
+  // ---------- Undo ----------
+  function pdfSnapshot() {
+    const snap = { pageOrder: [...pageOrder], overlays: Util.deepClone(overlays) };
+    History.snapshot('pdf', snap, (s) => {
+      pageOrder.length = 0; pageOrder.push(...s.pageOrder);
+      for (const k of Object.keys(overlays)) delete overlays[k];
+      Object.assign(overlays, Util.deepClone(s.overlays));
+      renderAll(); updatePageInfo();
+    });
+  }
+  function doUndo() { History.undo('pdf'); }
+  function doRedo() { History.redo('pdf'); }
+
   async function movePage(display, dir) {
     const j = display + dir;
     if (j < 0 || j >= pageOrder.length) return;
+    pdfSnapshot();
     [pageOrder[display], pageOrder[j]] = [pageOrder[j], pageOrder[display]];
     await renderAll(); markDirty();
   }
   async function deletePage(display) {
+    pdfSnapshot();
     pageOrder.splice(display, 1);
     await renderAll(); updatePageInfo(); markDirty();
     UI.toast(`Deleted page ${display + 1}`, 'success');
   }
   async function rotatePage(display) {
+    pdfSnapshot();
     // Rotation is applied as an overlay-stored transform; we keep it on the
     // underlying original index so it survives reorder. Track via overlays metadata.
     const origIdx = pageOrder[display];
@@ -276,6 +295,7 @@ const PdfTools = (() => {
         if (!text) return false;
         const origIdx = pageOrder[page - 1];
         if (origIdx == null) { UI.toast('Invalid page', 'err'); return false; }
+        pdfSnapshot();
         overlays[origIdx] = overlays[origIdx] || [];
         overlays[origIdx].push({
           kind: 'text', text,
@@ -341,6 +361,7 @@ const PdfTools = (() => {
       const scale = targetW / canvas.width;
       // Y in PDF coords from top-left (we render overlays top-left origin)
       const stroke = pts.map(p => ({ x: x0 + p.x * scale, y: y0 + p.y * scale }));
+      pdfSnapshot();
       overlays[origIdx] = overlays[origIdx] || [];
       overlays[origIdx].push({ kind: 'draw', points: stroke, color: '#111111', width: 1.5 });
       dlg.close();
@@ -457,12 +478,23 @@ const PdfTools = (() => {
     $('pdfTextBtn').onclick = addTextOverlay;
     $('pdfSignBtn').onclick = signDraw;
     $('pdfSaveBtn').onclick = saveDoc;
+    if ($('pdfUndoBtn')) $('pdfUndoBtn').onclick = doUndo;
+    if ($('pdfRedoBtn')) $('pdfRedoBtn').onclick = doRedo;
   }
 
   function boot() {
     wire();
+    History.registerCurrentSnapshot('pdf',
+      () => ({ pageOrder: [...pageOrder], overlays: Util.deepClone(overlays) }),
+      (s) => {
+        pageOrder.length = 0; pageOrder.push(...s.pageOrder);
+        for (const k of Object.keys(overlays)) delete overlays[k];
+        Object.assign(overlays, Util.deepClone(s.overlays));
+        renderAll(); updatePageInfo();
+      });
+    History.reset('pdf');
     setControlsVisible(false);
   }
 
-  return { boot };
+  return { boot, undo: doUndo, redo: doRedo };
 })();

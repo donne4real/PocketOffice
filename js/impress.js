@@ -26,6 +26,11 @@ const Impress = (() => {
     buildToolbar();
     buildLayout();
     wireCanvas();
+    // Undo registration: capture + restore current deck + cursor.
+    History.registerCurrentSnapshot('impress',
+      () => ({ slides: Util.deepClone(slides), current, selected }),
+      (s) => { slides = s.slides; current = s.current; selected = s.selected; renderSlideList(); renderCanvas(); });
+    History.reset('impress');
     // Restore
     Storage.load('impress:deck').then(saved => {
       if (saved && Array.isArray(saved.slides) && saved.slides.length) {
@@ -100,6 +105,9 @@ const Impress = (() => {
     tb.appendChild(btn('＋ Slide', addSlide, 'Add slide'));
     tb.appendChild(btn('Duplicate', () => duplicateSlide(current), 'Duplicate current'));
     tb.appendChild(sep());
+    tb.appendChild(btn('↶', doUndo, 'Undo (Ctrl+Z)'));
+    tb.appendChild(btn('↷', doRedo, 'Redo (Ctrl+Y)'));
+    tb.appendChild(sep());
     // Insert element buttons
     tb.appendChild(btn('📝 Text', () => addElement('text'), 'Add text box'));
     tb.appendChild(btn('▭ Rect', () => addElement('rect'), 'Add rectangle'));
@@ -116,6 +124,7 @@ const Impress = (() => {
     tb.appendChild(btn('▶ Present', startPresent, 'Present (Esc to exit)', true));
     tb.appendChild(btn('💾 Save', saveJson, 'Save deck (.json) — re-openable later'));
     tb.appendChild(btn('📥 Export ▾', exportMenu, 'Export to .pptx or .pdf'));
+    tb.appendChild(btn('🖨️', printDoc, 'Print all slides'));
   }
 
   // ---------- Slide list (thumbnails) ----------
@@ -232,7 +241,7 @@ const Impress = (() => {
         // Click on resize handle?
         if (e.target.classList.contains('imp-resize')) {
           const rect = c.getBoundingClientRect();
-          drag = { mode: 'resize', el, rect };
+          drag = { mode: 'resize', el, rect, snapped: false };
         } else {
           selected = el.id;
           const rect = c.getBoundingClientRect();
@@ -240,6 +249,7 @@ const Impress = (() => {
             mode: 'move', el, rect,
             startMx: e.clientX, startMy: e.clientY,
             startEx: el.x, startEy: el.y,
+            snapped: false,
           };
           renderCanvas();
         }
@@ -254,6 +264,8 @@ const Impress = (() => {
     document.addEventListener('mousemove', (e) => {
       if (!drag) return;
       const { el, rect } = drag;
+      // Snapshot once at the first actual movement of this drag.
+      if (!drag.snapped) { snapshot(); drag.snapped = true; }
       if (drag.mode === 'move') {
         const dxPct = (e.clientX - drag.startMx) / rect.width * 100;
         const dyPct = (e.clientY - drag.startMy) / rect.height * 100;
@@ -288,16 +300,21 @@ const Impress = (() => {
     });
 
     // Keyboard: delete selected, arrow keys nudge
+    let nudgeCoalesce = 0;
     c.addEventListener('keydown', (e) => {
       if (!selected) return;
       const el = slides[current].elements.find(x => x.id === selected);
       if (!el) return;
       if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault();
+        snapshot();
         slides[current].elements = slides[current].elements.filter(x => x.id !== selected);
         selected = null; renderCanvas(); renderSlideList(); markDirty();
       } else if (e.key.startsWith('Arrow')) {
         e.preventDefault();
+        // Coalesce rapid arrow nudges into one undo entry (~800ms window).
+        const now = Date.now();
+        if (now - nudgeCoalesce > 800) { snapshot(); nudgeCoalesce = now; }
         const d = e.shiftKey ? 5 : 1;
         if (e.key === 'ArrowLeft') el.x -= d;
         if (e.key === 'ArrowRight') el.x += d;
@@ -311,6 +328,7 @@ const Impress = (() => {
   function editText(el) {
     const v = prompt_full('Edit text', el.text || '', 'Type text (Ctrl+Enter for newline)');
     if (v === null) return;
+    snapshot();
     el.text = v;
     renderCanvas(); renderSlideList(); markDirty();
   }
@@ -376,13 +394,22 @@ const Impress = (() => {
     const iFill = ins.querySelector('#iFill'); if (iFill) iFill.oninput = () => { el.fill = iFill.value; renderCanvas(); renderSlideList(); markDirty(); };
     const iEditText = ins.querySelector('#iEditText'); if (iEditText) iEditText.onclick = () => editText(el);
     ins.querySelector('#iDelete').onclick = () => {
+      snapshot();
       slides[current].elements = slides[current].elements.filter(x => x.id !== selected);
       selected = null; renderCanvas(); renderSlideList(); markDirty();
     };
+    // Snapshot once when any inspector input is focused, so a whole field edit
+    // is a single undo entry regardless of which property changes.
+    let insSnapped = false;
+    ins.querySelectorAll('input, select').forEach(inp => {
+      inp.addEventListener('focus', () => { if (!insSnapped) { snapshot(); insSnapped = true; } });
+      inp.addEventListener('blur', () => { insSnapped = false; });
+    });
   }
 
   // ---------- Add elements ----------
   function addElement(kind) {
+    snapshot();
     const el = { id: 'e' + (seq++), kind, x: 25, y: 25, w: 50, h: 25 };
     if (kind === 'text') { el.text = 'New text'; el.fontSize = 24; el.color = '#222'; el.align = 'left'; }
     if (kind === 'rect' || kind === 'ellipse') el.fill = '#4a90e2';
@@ -393,19 +420,13 @@ const Impress = (() => {
   async function addImage() {
     try {
       const f = await FS.open({ accept: [{ description: 'Image', accept: { 'image/png': ['.png'], 'image/jpeg': ['.jpg','.jpeg'] } }] });
-      const b64 = bytesToBase64(f.bytes, f.name);
+      const b64 = Util.bytesToBase64(f.bytes, f.name);
+      snapshot();
       const el = { id: 'e' + (seq++), kind: 'image', x: 20, y: 20, w: 60, h: 50, dataUrl: b64 };
       slides[current].elements.push(el);
       selected = el.id;
       renderCanvas(); renderSlideList(); markDirty();
     } catch (e) { if (e.name !== 'AbortError') UI.toast('Image failed: ' + e.message, 'error'); }
-  }
-  function bytesToBase64(bytes, name) {
-    let bin = '';
-    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-    const ext = (name.split('.').pop() || 'png').toLowerCase();
-    const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : 'image/png';
-    return 'data:' + mime + ';base64,' + btoa(bin);
   }
 
   // ---------- Open / import ----------
@@ -447,6 +468,7 @@ const Impress = (() => {
       renderSlideList();
       renderCanvas();
       markDirty();
+      History.reset('impress');
       UI.toast(`Opened ${f.name} (${slides.length} slides)`, 'success');
     } catch (e) {
       UI.toast('Could not read deck: ' + (e.message || e), 'error');
@@ -501,7 +523,7 @@ const Impress = (() => {
               if (imgFile) {
                 const bytes = new Uint8Array(await imgFile.async('uint8array'));
                 const ext = (el._imgTarget.split('.').pop() || 'png').toLowerCase();
-                el.dataUrl = bytesToBase64(bytes, 'image.' + ext);
+                el.dataUrl = Util.bytesToBase64(bytes, 'image.' + ext);
               }
             } catch (e) { /* skip unreadable image */ }
             delete el._imgTarget;
@@ -516,6 +538,7 @@ const Impress = (() => {
       renderSlideList();
       renderCanvas();
       markDirty();
+      History.reset('impress');
       const skipped = slides.reduce((n, s) => n + (s.elements || []).filter(e => e._unsupported).length, 0);
       UI.toast(`Imported ${slides.length} slide${slides.length === 1 ? '' : 's'}${skipped ? ` (${skipped} item${skipped===1?'':'s'} skipped)` : ''}`, 'success');
     } catch (e) {
@@ -663,12 +686,14 @@ const Impress = (() => {
 
   // ---------- Slide operations ----------
   function addSlide() {
+    snapshot();
     slides.splice(current + 1, 0, { bg: '#ffffff', elements: [] });
     current = current + 1;
     selected = null;
     renderSlideList(); renderCanvas(); markDirty();
   }
   function duplicateSlide(i) {
+    snapshot();
     const copy = JSON.parse(JSON.stringify(slides[i]));
     copy.elements.forEach(e => e.id = 'e' + (seq++));
     slides.splice(i + 1, 0, copy);
@@ -677,6 +702,7 @@ const Impress = (() => {
   }
   function deleteSlide(i) {
     if (slides.length <= 1) { UI.toast('Need at least one slide', 'warn'); return; }
+    snapshot();
     slides.splice(i, 1);
     if (current >= slides.length) current = slides.length - 1;
     selected = null;
@@ -685,6 +711,7 @@ const Impress = (() => {
   function moveSlide(i, dir) {
     const j = i + dir;
     if (j < 0 || j >= slides.length) return;
+    snapshot();
     [slides[i], slides[j]] = [slides[j], slides[i]];
     if (current === i) current = j; else if (current === j) current = i;
     renderSlideList(); renderCanvas(); markDirty();
@@ -781,6 +808,29 @@ const Impress = (() => {
     } catch (e) {
       if (e.name !== 'AbortError') UI.toast('Save failed: ' + (e.message || e), 'error');
     }
+  }
+
+  // ---------- Print ----------
+  // Build a hidden container with all slides stacked one-per-page, print, remove.
+  function printDoc() {
+    // Remove any leftover print container.
+    document.getElementById('impPrint')?.remove();
+    const wrap = document.createElement('div');
+    wrap.id = 'impPrint';
+    wrap.style.display = 'none';
+    slides.forEach((s) => {
+      const slideEl = document.createElement('div');
+      slideEl.className = 'imp-print-slide';
+      slideEl.style.background = s.bg || '#fff';
+      s.elements.forEach(el => slideEl.appendChild(presentEl(el)));
+      wrap.appendChild(slideEl);
+    });
+    document.body.appendChild(wrap);
+    const cleanup = () => { wrap.remove(); window.removeEventListener('afterprint', cleanup); };
+    window.addEventListener('afterprint', cleanup);
+    wrap.style.display = 'block';
+    window.print();
+    setTimeout(() => { wrap.remove(); }, 2000);   // fallback cleanup
   }
 
   // ---------- Export ----------
@@ -894,6 +944,18 @@ const Impress = (() => {
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
     return bytes;
   }
+
+  // ---------- Undo ----------
+  // Snapshot the deck (deep copy) + cursor before a mutation. seq stays monotonic.
+  function snapshot() {
+    const snap = { slides: Util.deepClone(slides), current, selected };
+    History.snapshot('impress', snap, (s) => {
+      slides = s.slides; current = s.current; selected = s.selected;
+      renderSlideList(); renderCanvas();
+    });
+  }
+  function doUndo() { History.undo('impress'); }
+  function doRedo() { History.redo('impress'); }
 
   // ---------- Dirty + autosave ----------
   function markDirty() {

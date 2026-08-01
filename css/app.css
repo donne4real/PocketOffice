@@ -439,3 +439,48 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: var(-
 .hidden { display: none !important; }
 .muted { color: var(--text-dim); }
 .small { font-size: 12px; }
+
+/* ==========================================================================
+   Print — hide the app chrome, show only the active document.
+   ========================================================================== */
+@media print {
+  /* Hide all UI chrome */
+  .app-tabs, .toolbar, .statusbar,
+  .impress-sidebar, .impress-inspector, .impress-sidehead,
+  .calc-colheader, .calc-rowhead, .calc-corner,
+  .pdf-pagebar, .calc-chart-head, .calc-chart-resize,
+  #toasts, #dialogRoot, .te-find, .te-tabs { display: none !important; }
+
+  /* Reset the flex layout so the document can flow naturally onto pages */
+  html, body { height: auto !important; overflow: visible !important; background: #fff !important; }
+  #app, .workspace { display: block !important; height: auto !important; overflow: visible !important; }
+  .tool-panel { display: none !important; }
+  .tool-panel.active { display: block !important; }
+
+  /* Writer: clean white page, no shadow */
+  .writer-surface { overflow: visible !important; background: #fff !important; padding: 0 !important; }
+  .writer-doc {
+    box-shadow: none !important; margin: 0 auto !important; max-width: none !important;
+    min-height: 0 !important; padding: 0.5in !important; color: #000 !important; background: #fff !important;
+  }
+
+  /* Calc: show the grid as a plain table, hide empty area beyond data */
+  .calc-wrap, .calc-content { overflow: visible !important; height: auto !important; display: block !important; }
+  .calc-content { position: static !important; background: #fff !important; }
+  .calc-body { position: static !important; display: table !important; width: auto !important; grid-template-columns: none !important; }
+  .calc-rowhead { display: none !important; }
+  .calc-cell { display: table-cell !important; height: auto !important; min-height: 20px; padding: 3px 6px !important;
+    border: 1px solid #999 !important; color: #000 !important; overflow: visible !important; }
+  .calc-cell:empty { display: none !important; }
+  .calc-chart-panel { page-break-inside: avoid; box-shadow: none !important; border: 1px solid #999 !important; }
+
+  /* Impress: print all slides, one per page. The print container (#impPrint) is
+     built on demand; each .imp-print-slide breaks to a new page. */
+  .impress-wrap, .impress-stage, .impress-canvas { display: none !important; }
+  #impPrint { display: block !important; }
+  .imp-print-slide {
+    width: 10in; height: 5.625in; page-break-after: always; position: relative;
+    background: #fff; overflow: hidden; box-shadow: none !important; border: 0 !important;
+  }
+  .imp-print-slide * { color: #000 !important; }
+}

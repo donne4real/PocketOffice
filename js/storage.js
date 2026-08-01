@@ -263,3 +263,103 @@ const UI = (() => {
 
   return { toast, dialog, prompt, confirm };
 })();
+
+/* --------------------------------------------------------------------------
+   History — per-tool undo/redo stacks.
+   Each tool registers a unique key (e.g. 'calc', 'impress'). Before every
+   mutating action, the tool calls History.snapshot(key, stateClone, restoreFn)
+   where stateClone is a deep-copy of the pre-mutation state and restoreFn is
+   a closure that re-applies it. undo()/redo() call the recorded restoreFn.
+   -------------------------------------------------------------------------- */
+const History = (() => {
+  const MAX = 60;
+  // stacks[key] = { undo: [], redo: [] }
+  const stacks = {};
+
+  function ensure(key) {
+    if (!stacks[key]) stacks[key] = { undo: [], redo: [] };
+    return stacks[key];
+  }
+
+  // Record a pre-mutation snapshot. stateClone must be a deep copy the tool
+  // already made; restoreFn(stateClone) applies it back. Returns nothing.
+  function snapshot(key, stateClone, restoreFn) {
+    const s = ensure(key);
+    s.undo.push({ state: stateClone, restore: restoreFn });
+    if (s.undo.length > MAX) s.undo.shift();
+    // A new action invalidates the redo branch.
+    s.redo.length = 0;
+  }
+
+  function undo(key) {
+    const s = ensure(key);
+    if (!s.undo.length) return false;
+    const entry = s.undo.pop();
+    // Before restoring the old state, snapshot the CURRENT state so redo works.
+    // We rely on the tool's restoreFn to give us a fresh clone via its own
+    // capture; simpler: the tool passes a currentState clone alongside.
+    // To keep the API simple, we ask the tool for a "current snapshot" callback
+    // stored on ensure(). See registerCurrentSnapshot().
+    const curSnapshot = s.capture ? s.capture() : null;
+    if (curSnapshot && s.captureRestore) {
+      s.redo.push({ state: curSnapshot, restore: s.captureRestore });
+    }
+    entry.restore(entry.state);
+    return true;
+  }
+
+  function redo(key) {
+    const s = ensure(key);
+    if (!s.redo.length) return false;
+    const entry = s.redo.pop();
+    const curSnapshot = s.capture ? s.capture() : null;
+    if (curSnapshot && s.captureRestore) {
+      s.undo.push({ state: curSnapshot, restore: s.captureRestore });
+    }
+    entry.restore(entry.state);
+    return true;
+  }
+
+  // A tool tells History how to capture+restore the CURRENT state (for the
+  // opposite-direction stack during undo/redo). capture() returns a clone;
+  // captureRestore(clone) applies it.
+  function registerCurrentSnapshot(key, capture, captureRestore) {
+    const s = ensure(key);
+    s.capture = capture;
+    s.captureRestore = captureRestore;
+  }
+
+  function can(key) {
+    const s = ensure(key);
+    return { undo: s.undo.length > 0, redo: s.redo.length > 0 };
+  }
+
+  function reset(key) {
+    if (stacks[key]) { stacks[key].undo.length = 0; stacks[key].redo.length = 0; }
+    else ensure(key);
+  }
+
+  return { snapshot, undo, redo, can, reset, registerCurrentSnapshot };
+})();
+
+/* --------------------------------------------------------------------------
+   Util — small shared helpers.
+   -------------------------------------------------------------------------- */
+const Util = (() => {
+  // Convert a Uint8Array + filename to a data: URL. Used by Writer/Impress/PdfTools.
+  function bytesToBase64(bytes, name) {
+    let bin = '';
+    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    const ext = (name.split('.').pop() || 'png').toLowerCase();
+    const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg'
+               : ext === 'gif' ? 'image/gif'
+               : ext === 'webp' ? 'image/webp'
+               : 'image/png';
+    return 'data:' + mime + ';base64,' + btoa(bin);
+  }
+  function deepClone(obj) {
+    return JSON.parse(JSON.stringify(obj));
+  }
+  return { bytesToBase64, deepClone };
+})();
+

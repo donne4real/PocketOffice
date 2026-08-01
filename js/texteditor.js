@@ -32,6 +32,7 @@ const TextEditor = (() => {
     if (!name) name = `Untitled-${seq - 1}.${EXT_FOR_MODE[mode] || 'txt'}`;
     buffers.push({ id, name, text, mode, dirty: false, handle });
     activeId = id;
+    History.reset('text:' + id);
     renderTabs();
     loadIntoEditor();
     autosaveSoon();
@@ -54,6 +55,7 @@ const TextEditor = (() => {
     const doClose = async () => {
       buffers.splice(i, 1);
       Storage.remove('text:' + b.name);
+      History.reset('text:' + b.id);
       if (activeId === id) {
         activeId = buffers.length ? buffers[Math.max(0, i - 1)].id : null;
       }
@@ -113,6 +115,29 @@ const TextEditor = (() => {
       tabs.appendChild(newBtn);
     }
   }
+
+  // ----- Undo (per-buffer, debounced on input) -----
+  let teUndoTimer = null;
+  let teUndoArmed = {};
+  function teSnapshotKey() { const b = active(); return b ? 'text:' + b.id : null; }
+  function teCapture() { const b = active(); return b ? b.text : null; }
+  function teRestore(text) {
+    const b = active(); if (!b) return;
+    b.text = text; els.textarea().value = text;
+    updateGutter(); updateStatus(); markDirty();
+  }
+  function teScheduleSnapshot() {
+    const b = active(); if (!b) return;
+    const key = 'text:' + b.id;
+    clearTimeout(teUndoTimer);
+    teUndoTimer = setTimeout(() => { teUndoArmed[key] = false; }, 600);
+    if (teUndoArmed[key]) return;
+    teUndoArmed[key] = true;
+    History.registerCurrentSnapshot(key, () => teCapture(), (t) => teRestore(t));
+    History.snapshot(key, b.text, (t) => teRestore(t));
+  }
+  function teUndo() { const k = teSnapshotKey(); if (k) History.undo(k); }
+  function teRedo() { const k = teSnapshotKey(); if (k) History.redo(k); }
 
   function markDirty() {
     const b = active();
@@ -272,7 +297,7 @@ const TextEditor = (() => {
 
   function wireEvents() {
     const ta = els.textarea();
-    ta.addEventListener('input', markDirty);
+    ta.addEventListener('input', () => { teScheduleSnapshot(); markDirty(); });
     ta.addEventListener('keydown', (e) => {
       // Tab inserts 4 spaces instead of moving focus
       if (e.key === 'Tab') {
@@ -331,5 +356,5 @@ const TextEditor = (() => {
     setTimeout(() => els.textarea().focus(), 0);
   }
 
-  return { boot, newBuffer, onActivate };
+  return { boot, newBuffer, onActivate, undo: teUndo, redo: teRedo };
 })();

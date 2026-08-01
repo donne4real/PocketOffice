@@ -104,6 +104,8 @@
           <button class="tb-btn icon-only" id="pdfZoomIn" style="display:none" title="Zoom in">+</button>
           <span class="tb-sep" id="pdfSep2" style="display:none"></span>
           <button class="tb-btn" id="pdfMergeBtn" title="Merge multiple PDFs into one">🔗 Merge</button>
+          <button class="tb-btn icon-only" id="pdfUndoBtn" style="display:none" title="Undo (Ctrl+Z)">↶</button>
+          <button class="tb-btn icon-only" id="pdfRedoBtn" style="display:none" title="Redo (Ctrl+Y)">↷</button>
           <button class="tb-btn" id="pdfSplitBtn" style="display:none" title="Extract page range">✂ Split</button>
           <button class="tb-btn" id="pdfRotateBtn" style="display:none" title="Rotate first page">⟳ Rotate</button>
           <button class="tb-btn" id="pdfDeleteBtn" style="display:none" title="Delete a page">🗑 Delete</button>
@@ -154,6 +156,7 @@
   <script src="lib/mammoth.browser.js"></script>   <!-- reads existing .docx -->
   <script src="lib/jszip.min.js"></script>     <!-- required by pptxgenjs -->
   <script src="lib/pptxgenjs.min.js"></script>
+  <script src="lib/chart.umd.min.js"></script>  <!-- charts in Calc -->
 
   <!-- ====================== APP CODE ====================== -->
   <script src="js/storage.js"></script>
