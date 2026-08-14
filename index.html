@@ -20,6 +20,7 @@
       <button class="app-tab" data-app="impress"><span class="ico">📽️</span>Impress</button>
       <button class="app-tab active" data-app="text"><span class="ico">📄</span>Text Editor</button>
       <button class="app-tab" data-app="pdf"><span class="ico">📕</span>PDF Tools</button>
+      <button class="app-tab" data-app="markdown"><span class="ico">📖</span>Markdown</button>
 
       <div class="tab-spacer"></div>
       <button class="icon-btn" id="themeToggle" title="Toggle dark mode">🌙</button>
@@ -132,6 +133,11 @@
           </div>
         </div>
       </section>
+
+      <!-- ====================== MARKDOWN ====================== -->
+      <section class="tool-panel" data-app="markdown">
+        <div class="md-wrap" id="mdContent"><!-- built by markdown.js --></div>
+      </section>
     </main>
 
     <!-- ====================== STATUS BAR ====================== -->
@@ -140,7 +146,7 @@
       <span id="statusInfo"></span>
       <span class="spacer"></span>
       <span id="statusAutosave" class="muted"></span>
-      <span class="muted">v1.1 · 2026-07-31 · charts · undo · print</span>
+      <span class="muted">v1.2 · 2026-08-13 · + Markdown reader</span>
     </footer>
   </div>
 
@@ -157,6 +163,7 @@
   <script src="lib/jszip.min.js"></script>     <!-- required by pptxgenjs -->
   <script src="lib/pptxgenjs.min.js"></script>
   <script src="lib/chart.umd.min.js"></script>  <!-- charts in Calc -->
+  <script src="lib/marked.min.js"></script>     <!-- markdown rendering -->
 
   <!-- ====================== APP CODE ====================== -->
   <script src="js/storage.js"></script>
@@ -165,6 +172,7 @@
   <script src="js/calc.js"></script>
   <script src="js/impress.js"></script>
   <script src="js/pdftools.js"></script>
+  <script src="js/markdown.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

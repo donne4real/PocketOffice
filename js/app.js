@@ -9,10 +9,11 @@
     impress: 'Impress',
     text:    'Text Editor',
     pdf:     'PDF Tools',
+    markdown:'Markdown',
   };
 
   let currentApp = 'text';
-  const apps = ['writer', 'calc', 'impress', 'text', 'pdf'];
+  const apps = ['writer', 'calc', 'impress', 'text', 'pdf', 'markdown'];
 
   function setApp(name) {
     if (!apps.includes(name)) return;
@@ -28,6 +29,7 @@
     if (name === 'writer' && Writer.onActivate) Writer.onActivate();
     if (name === 'calc' && Calc.onActivate) Calc.onActivate();
     if (name === 'impress' && Impress.onActivate) Impress.onActivate();
+    if (name === 'markdown' && MarkdownReader.onActivate) MarkdownReader.onActivate();
   }
 
   function setTheme(theme) {
@@ -92,8 +94,8 @@
       const tag = (e.target.tagName || '').toLowerCase();
       const typing = tag === 'input' || tag === 'textarea';
 
-      // Alt+1..5 switches apps
-      if (e.altKey && /^[1-5]$/.test(e.key)) {
+      // Alt+1..6 switches apps
+      if (e.altKey && /^[1-6]$/.test(e.key)) {
         e.preventDefault();
         setApp(apps[+e.key - 1]);
       }
@@ -141,8 +143,9 @@
     try { await Calc.boot(); } catch (e) { console.error('Calc boot:', e); }
     try { await Impress.boot(); } catch (e) { console.error('Impress boot:', e); }
     try { await PdfTools.boot(); } catch (e) { console.error('PdfTools boot:', e); }
+    try { await MarkdownReader.boot(); } catch (e) { console.error('MarkdownReader boot:', e); }
 
     setApp('text');
-    UI.toast('PocketOffice ready — Alt+1..5 to switch apps', 'success', 4000);
+    UI.toast('PocketOffice ready — Alt+1..6 to switch apps', 'success', 4000);
   });
 })();

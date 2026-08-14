@@ -449,6 +449,7 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: var(-
   .impress-sidebar, .impress-inspector, .impress-sidehead,
   .calc-colheader, .calc-rowhead, .calc-corner,
   .pdf-pagebar, .calc-chart-head, .calc-chart-resize,
+  .md-toolbar, .md-editor-pane, .md-divider,
   #toasts, #dialogRoot, .te-find, .te-tabs { display: none !important; }
 
   /* Reset the flex layout so the document can flow naturally onto pages */
@@ -483,4 +484,12 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: var(-
     background: #fff; overflow: hidden; box-shadow: none !important; border: 0 !important;
   }
   .imp-print-slide * { color: #000 !important; }
+
+  /* Markdown: print only the rendered preview, as a clean document. */
+  .md-wrap, .md-split, .md-preview-pane { display: block !important; overflow: visible !important; height: auto !important; background: #fff !important; }
+  .md-preview {
+    max-width: none !important; margin: 0 !important; padding: 0.5in !important;
+    color: #000 !important; background: #fff !important; box-shadow: none !important;
+  }
+  .md-preview pre, .md-preview code { color: #000 !important; }
 }
