@@ -53,7 +53,9 @@ const MarkdownReader = (() => {
     tb.appendChild(btn('↶', doUndo, 'Undo (Ctrl+Z)'));
     tb.appendChild(btn('↷', doRedo, 'Redo (Ctrl+Y)'));
     tb.appendChild(sep());
-    tb.appendChild(btn('⇆ Split', toggleView, 'Toggle split / read-only view'));
+    const viewBtn = btn('⇆ Split', toggleView, 'Toggle split / read-only view');
+    viewBtn.id = 'mdViewToggle';
+    tb.appendChild(viewBtn);
     tb.appendChild(sep());
     tb.appendChild(btn('📥 Export ▾', exportMenu, 'Export to HTML'));
     tb.appendChild(btn('🖨️', () => printDoc(), 'Print the rendered document', true));
@@ -133,7 +135,7 @@ const MarkdownReader = (() => {
     const split = $('mdSplit');
     const editorPane = $('mdEditorPane');
     const divider = $('mdDivider');
-    const btn = $('mdToolbar').querySelector('.tb-btn:nth-child(7)'); // the Split button
+    const btn = $('mdViewToggle');
     if (viewMode === 'read') {
       split.classList.add('md-readmode');
       editorPane.style.display = 'none';
@@ -259,7 +261,13 @@ ${safe}
   }
 
   // ---------- Print ----------
+  let lastPrintAt = 0;
   function printDoc() {
+    // Guard: a second window.print() while the dialog is still open closes it
+    // (double-click on the button, or button + Ctrl+P). Ignore repeats <1s.
+    const now = Date.now();
+    if (now - lastPrintAt < 1000) return;
+    lastPrintAt = now;
     // Ensure preview is up to date before printing.
     render();
     // In read mode the editor is already hidden; in split mode, the @media print

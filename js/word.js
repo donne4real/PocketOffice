@@ -143,7 +143,7 @@ const Writer = (() => {
       case 'save':       return saveDoc(false);
       case 'saveas':     return saveDoc(true);
       case 'export':     return exportMenu();
-      case 'print':      return window.print();
+      case 'print':      return printDoc();
       case 'find':       return findReplace();
       case 'foreColor': {
         const c = await pickColor('Text color'); if (c) exec('foreColor', c); return;
@@ -596,6 +596,16 @@ const Writer = (() => {
     const blob = await D.Packer.toBlob(doc);
     const buf = new Uint8Array(await blob.arrayBuffer());
     await FS.save({ name: base + '.docx', mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', bytes: buf, handle: null });
+  }
+
+  // ----- Print -----
+  let lastPrintAt = 0;
+  function printDoc() {
+    // Guard against double-click firing window.print() twice (2nd call closes the dialog).
+    const now = Date.now();
+    if (now - lastPrintAt < 1000) return;
+    lastPrintAt = now;
+    window.print();
   }
 
   // ----- Undo -----

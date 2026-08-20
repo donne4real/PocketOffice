@@ -812,7 +812,12 @@ const Impress = (() => {
 
   // ---------- Print ----------
   // Build a hidden container with all slides stacked one-per-page, print, remove.
+  let lastPrintAt = 0;
   function printDoc() {
+    // Guard against double-click firing window.print() twice (2nd call closes the dialog).
+    const now = Date.now();
+    if (now - lastPrintAt < 1000) return;
+    lastPrintAt = now;
     // Remove any leftover print container.
     document.getElementById('impPrint')?.remove();
     const wrap = document.createElement('div');

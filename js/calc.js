@@ -758,6 +758,9 @@ const Calc = (() => {
     if (el) {
       el.classList.add('active');
       el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      // Focus the cell so keyboard events (typing, arrows, Enter, Delete)
+      // reach the grid handler. tabIndex=-1 allows programmatic focus only.
+      if (!editingCell) el.focus({ preventScroll: true });
     }
     // formula bar shows raw content
     $('calcFx').value = (data[addr] && data[addr].raw) || '';
@@ -793,12 +796,16 @@ const Calc = (() => {
       case 'ArrowDown':  moveActive(0, 1); break;
       case 'ArrowLeft':  moveActive(-1, 0); break;
       case 'ArrowRight': moveActive(1, 0); break;
-      case 'Enter':      moveActive(0, 1); break;
+      case 'Enter':      startEdit(); break;
       case 'Tab':        moveActive(e.shiftKey ? -1 : 1, 0); break;
       case 'Delete': case 'Backspace':
-        delete data[activeCell];
-        recalcAll(); renderCell(activeCell); renderAll();
-        $('calcFx').value = ''; markDirty(); break;
+        if (data[activeCell]) {
+          snapshot();
+          delete data[activeCell];
+          recalcAll(); renderCell(activeCell); renderAll();
+          $('calcFx').value = ''; markDirty();
+        }
+        break;
       case 'F2':         startEdit(); break;
       default:
         // If a printable char, start editing with it
@@ -866,13 +873,24 @@ const Calc = (() => {
   }
 
   // Formula bar editing
-  function commitFormulaBar() {
+  function commitFormulaBar(fromEnter = false) {
     const v = $('calcFx').value;
     if (!activeCell) return;
+    // Skip when unchanged — avoids spurious undo entries on every blur.
+    const cur = (data[activeCell] && data[activeCell].raw) || '';
+    if (cur === v) {
+      if (fromEnter) focusActiveCell();
+      return;
+    }
     snapshot();
     if (v === '') delete data[activeCell];
     else { if (!data[activeCell]) data[activeCell] = {}; data[activeCell].raw = v; }
     recalcAll(); renderAll(); markDirty();
+    if (fromEnter) focusActiveCell();
+  }
+  function focusActiveCell() {
+    const el = document.querySelector('.calc-cell.active');
+    if (el) el.focus({ preventScroll: true });
   }
 
   // ---------- Fill / clear ----------
@@ -976,7 +994,12 @@ const Calc = (() => {
 
   // ---------- Print ----------
   // Build a hidden HTML table of populated cells, print it, then remove it.
+  let lastPrintAt = 0;
   function printDoc() {
+    // Guard against double-click firing window.print() twice (2nd call closes the dialog).
+    const now = Date.now();
+    if (now - lastPrintAt < 1000) return;
+    lastPrintAt = now;
     // Find the populated range.
     let maxR = 0, maxC = 0;
     for (const addr of Object.keys(data)) {
@@ -1075,9 +1098,9 @@ const Calc = (() => {
 
     // Formula bar handlers
     $('calcFx').addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); commitFormulaBar(); }
+      if (e.key === 'Enter') { e.preventDefault(); commitFormulaBar(true); }
     });
-    $('calcFx').addEventListener('blur', commitFormulaBar);
+    $('calcFx').addEventListener('blur', () => commitFormulaBar(false));
 
     // Register undo: how to capture + restore the current state.
     History.registerCurrentSnapshot('calc', captureCalcState, restoreCalcState);
