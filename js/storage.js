@@ -89,10 +89,35 @@ const FS = (() => {
     typeof window.showSaveFilePicker === 'function' &&
     typeof window.showOpenFilePicker === 'function';
 
+  // ---- Remember the last opened/saved file so dialogs reopen in the same folder ----
+  // FileSystemHandles are structured-cloneable, so IndexedDB persists them; a
+  // file handle passed as `startIn` makes the picker open in its parent folder.
+  async function rememberHandle(handle) {
+    if (!handle) return;
+    try { await Storage.save('fs:lastHandle', handle); } catch (e) { /* non-fatal */ }
+  }
+  async function lastStartIn() {
+    try {
+      const h = await Storage.load('fs:lastHandle');
+      return (h && typeof h === 'object') ? h : null;
+    } catch (e) { return null; }
+  }
+
   // Open: returns { name, text, bytes, handle? }
   async function open({ accept = [{ description: 'All files', accept: { '*/*': [] } }], multiple = false } = {}) {
     if (supported()) {
-      const handles = await window.showOpenFilePicker({ multiple, types: accept, excludeAcceptAllOption: false });
+      const opts = { multiple, types: accept, excludeAcceptAllOption: false };
+      const startIn = await lastStartIn();
+      let handles;
+      try {
+        handles = await window.showOpenFilePicker(startIn ? { ...opts, startIn } : opts);
+      } catch (e) {
+        // A stale remembered location (deleted folder, unplugged drive) can make
+        // the picker throw — retry once from the browser's default location.
+        if (startIn && e.name !== 'AbortError') handles = await window.showOpenFilePicker(opts);
+        else throw e;
+      }
+      if (handles && handles[0]) rememberHandle(handles[0]);
       const results = [];
       for (const h of handles) {
         const f = await h.getFile();
@@ -133,6 +158,7 @@ const FS = (() => {
         const w = await handle.createWritable();
         await w.write(bytes);
         await w.close();
+        rememberHandle(handle);
         return { handle, downloaded: false };
       } catch (e) {
         // Permission may have been revoked — fall through to picker.
@@ -143,13 +169,23 @@ const FS = (() => {
     if (supported()) {
       try {
         const ext = (name.split('.').pop() || 'txt').toLowerCase();
-        const h = await window.showSaveFilePicker({
+        const opts = {
           suggestedName: name,
           types: [{
             description: mime,
             accept: { [mime]: ['.' + ext] },
           }],
-        });
+        };
+        const startIn = await lastStartIn();
+        let h;
+        try {
+          h = await window.showSaveFilePicker(startIn ? { ...opts, startIn } : opts);
+        } catch (e) {
+          // Stale remembered location — retry once from the default location.
+          if (startIn && e.name !== 'AbortError') h = await window.showSaveFilePicker(opts);
+          else throw e;
+        }
+        rememberHandle(h);
         const w = await h.createWritable();
         await w.write(bytes);
         await w.close();
