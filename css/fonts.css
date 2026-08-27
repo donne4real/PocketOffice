@@ -1,0 +1,42 @@
+/* ==========================================================================
+   fonts.css — open-source fonts bundled in lib/fonts/ (SIL OFL 1.1).
+   Loaded offline via @font-face so documents render identically on every
+   PC — see lib/fonts/OFL-LICENSES.md for credits.
+   Variable WOFF2 files: one file covers the whole weight range.
+   ========================================================================== */
+
+@font-face {
+  font-family: 'Inter';
+  src: url('../lib/fonts/inter-var.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Inter';
+  src: url('../lib/fonts/inter-var-italic.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Lora';
+  src: url('../lib/fonts/lora-var.woff2') format('woff2');
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Lora';
+  src: url('../lib/fonts/lora-var-italic.woff2') format('woff2');
+  font-weight: 400 700;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('../lib/fonts/jetbrains-mono-var.woff2') format('woff2');
+  font-weight: 100 800;
+  font-style: normal;
+  font-display: swap;
+}

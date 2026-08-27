@@ -1,11 +1,12 @@
 ============================================================
-  PocketOffice v1.0 — how to run it on a restricted PC
+  PocketOffice v1.2.4 — how to run it on a restricted PC
 ============================================================
 
 WHAT IT IS
   A complete office suite that runs inside a web browser.
   No installation. No admin rights. No internet needed.
-  Five tools: Writer, Calc, Impress, Text Editor, PDF Tools.
+  Six tools: Writer, Calc, Impress, Text Editor, PDF Tools,
+  Markdown.
 
 ------------------------------------------------------------
 STEP 1 — Copy this whole "PocketOffice" folder to the PC
@@ -35,17 +36,26 @@ STEP 2 — Open it (pick ONE method)
     * Open Edge, paste into the address bar, press Enter
     * It will look like:  file:///E:/PocketOffice/index.html
 
-  You should see the PocketOffice tab strip with 5 tools.
+  You should see the PocketOffice tab strip with 6 tools.
 
 ------------------------------------------------------------
 STEP 3 — Use it
 ------------------------------------------------------------
-  * Click any of the 5 tabs at the top:
+  * Click any of the 6 tabs at the top:
       Writer        word processor
-      Calc          spreadsheet
+      Calc          spreadsheet (with charts)
       Impress       slide presentations
       Text Editor   plain text / code
       PDF Tools     open & view PDFs
+      Markdown      live-preview markdown editor
+
+  * ＋ NEW starts a fresh document in Writer, Calc, Impress
+    (it asks before discarding unsaved work).
+
+  * FONTS: Writer and Impress offer 18 system fonts plus
+    Inter, Lora and JetBrains Mono — these three are bundled
+    in the folder (lib/fonts), so they look the same on any
+    PC, even offline.
 
   * Open and save real files with the toolbar buttons
     (Open… / Save / Save As…). Files go wherever you pick.
@@ -53,7 +63,7 @@ STEP 3 — Use it
   * Everything also AUTOSAVES to the browser, so closing the
     tab by accident loses nothing.
 
-  * Keyboard:  Alt+1..5 switches tools.
+  * Keyboard:  Alt+1..6 switches tools.
                Ctrl+S saves the current document.
 
 ------------------------------------------------------------
@@ -76,6 +86,7 @@ TROUBLESHOOTING
 PRIVACY
 ------------------------------------------------------------
   100% local. No data leaves this PC. No telemetry. No
-  accounts. Every library is bundled in the "lib" folder.
+  accounts. Every library and font is bundled in the "lib"
+  folder.
 
 ============================================================

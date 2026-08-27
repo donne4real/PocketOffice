@@ -399,3 +399,28 @@ const Util = (() => {
   return { bytesToBase64, deepClone };
 })();
 
+/* --------------------------------------------------------------------------
+   Fonts — the font picker lists shared by Writer and Impress.
+   BUNDLED families are @font-face'd from lib/fonts/ in css/fonts.css, so
+   they render identically everywhere, fully offline. SYSTEM families depend
+   on what the host PC has installed (Windows-bundled ClearType fonts first).
+   -------------------------------------------------------------------------- */
+const Fonts = (() => {
+  const SYSTEM = [
+    'Calibri', 'Segoe UI', 'Arial', 'Verdana', 'Tahoma', 'Trebuchet MS',
+    'Times New Roman', 'Georgia', 'Palatino Linotype', 'Cambria',
+    'Candara', 'Constantia', 'Corbel',
+    'Courier New', 'Consolas', 'Lucida Console',
+    'Comic Sans MS', 'Impact',
+  ];
+  const BUNDLED = ['Inter', 'Lora', 'JetBrains Mono'];
+
+  // <option> HTML for a font <select>, grouped by source.
+  function options(selected) {
+    const opt = (f) => `<option value="${f}" ${f === selected ? 'selected' : ''}>${f}</option>`;
+    return `<optgroup label="System fonts">${SYSTEM.map(opt).join('')}</optgroup>` +
+           `<optgroup label="Bundled (offline)">${BUNDLED.map(opt).join('')}</optgroup>`;
+  }
+  return { SYSTEM, BUNDLED, options };
+})();
+

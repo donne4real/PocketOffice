@@ -7,6 +7,7 @@
 const Writer = (() => {
   let docHandle = null;       // FileSystemFileHandle for "Save" reuse
   let docName = 'Untitled-1.html';
+  let untitledSeq = 1;
   let dirty = false;
   let autosaveTimer = null;
 
@@ -14,7 +15,6 @@ const Writer = (() => {
   let editor = null;          // the contenteditable div
 
   // ----- Toolbar definition (rendered into #writerToolbar) -----
-  const FONTS = ['Calibri', 'Arial', 'Times New Roman', 'Georgia', 'Verdana', 'Courier New', 'Tahoma', 'Trebuchet MS', 'Comic Sans MS'];
   const SIZES = [1, 2, 3, 4, 5, 6, 7];   // document.execCommand fontSize uses 1..7
 
   function buildToolbar() {
@@ -41,6 +41,7 @@ const Writer = (() => {
 
     // File group
     group([
+      btn('＋ New', 'new', 'New document'),
       btn('📂 Open', 'open', 'Open…'),
       btn('💾 Save', 'save', 'Save (Ctrl+S)'),
       btn('Save As…', 'saveas', 'Save As…'),
@@ -60,7 +61,7 @@ const Writer = (() => {
     // Font + size
     const fontSel = document.createElement('select');
     fontSel.className = 'tb-select';
-    fontSel.innerHTML = FONTS.map(f => `<option>${f}</option>`).join('');
+    fontSel.innerHTML = Fonts.options('Calibri');
     fontSel.style.minWidth = '130px';
     fontSel.onchange = () => { editor.focus(); run('fontname', fontSel.value); };
     const sizeSel = document.createElement('select');
@@ -139,6 +140,7 @@ const Writer = (() => {
   // ----- Command runner (delegates to execCommand or shows a dialog) -----
   async function run(cmd, value) {
     switch (cmd) {
+      case 'new':        return newDoc();
       case 'open':       return openDoc();
       case 'save':       return saveDoc(false);
       case 'saveas':     return saveDoc(true);
@@ -315,6 +317,29 @@ const Writer = (() => {
   }
 
   // ----- Open / Save / Export -----
+  // Start a fresh blank document (asks before discarding current content).
+  async function newDoc() {
+    const hasContent = editor.textContent.trim() !== '' ||
+                       editor.querySelector('img, table, hr, a');
+    if (hasContent) {
+      const ok = await UI.confirm({
+        title: 'New document?',
+        message: 'The current document will be discarded. Unsaved changes will be lost.',
+        okText: 'Discard & start new', danger: true,
+      });
+      if (!ok) return;
+    }
+    editor.innerHTML = '<p><br></p>';
+    docName = 'Untitled-' + (++untitledSeq) + '.html';
+    docHandle = null;
+    dirty = false;
+    updateName();
+    History.reset('writer');
+    autosaveSoon();
+    updateStatus();
+    editor.focus();
+  }
+
   async function openDoc() {
     try {
       const f = await FS.open({

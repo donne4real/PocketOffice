@@ -7,9 +7,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![No Dependencies](https://img.shields.io/badge/runtime-zero%20deps-success)](#)
 [![Runs Offline](https://img.shields.io/badge/runs-100%25%20offline-success)](#)
-[![Size](https://img.shields.io/badge/size-4.4_MB-informational)](#)
+[![Size](https://img.shields.io/badge/size-5.5_MB-informational)](#)
 
-**Writer** · **Calc** · **Impress** · **Text Editor** · **PDF Tools**
+**Writer** · **Calc** · **Impress** · **Text Editor** · **PDF Tools** · **Markdown**
 
 ### 🌐 **[Try the live demo →](https://donne4real.github.io/PocketOffice/)**
 
@@ -29,26 +29,47 @@ three constraints:
 |------------|---------------------------|
 | 🔒 No admin / no installer | It's just files. Opening HTML in a browser needs no privileges. |
 | 🚫 AppLocker blocks unknown `.exe` | We run no `.exe` at all. The trusted browser (Edge/Chrome, already installed) does everything. |
-| 📡 No internet | Every library is bundled locally in `lib/`. Zero CDN calls. |
+| 📡 No internet | Every library — and even three typeface families — is bundled locally in `lib/`. Zero CDN calls. |
 
 > 💡 **Tip:** Copy the whole folder to a USB stick, plug into any locked-down
 > PC, and double-click `start.bat`. It just works.
 
-## The five tools
+## The six tools
 
 | | Tool | Highlights | Formats |
 |---|------|------------|---------|
-| 📝 | **Writer** | Full rich-text toolbar: font/color/headings/lists/tables/images/links, find-replace, autosave. Reads **and** writes `.docx`. | `.docx` `.pdf` `.html` `.txt` |
-| 📊 | **Calc** | 1000×100 grid + hand-written formula engine (60+ functions: `SUM`, `IF`, `VLOOKUP`, `ROUND`, `CONCAT`, `STDEV`…). Cell refs, ranges, error values. | `.xlsx` `.csv` |
-| 📽️ | **Impress** | 16:9 slides, text/shapes/images, drag-and-resize, inspector, **fullscreen present mode**. | `.pptx` `.pdf` |
+| 📝 | **Writer** | Full rich-text toolbar: font/color/headings/lists/tables/images/links, find-replace, autosave, **21 fonts** (incl. 3 bundled). Reads **and** writes `.docx`. | `.docx` `.pdf` `.html` `.txt` |
+| 📊 | **Calc** | 1000×100 grid + hand-written formula engine (60+ functions: `SUM`, `IF`, `VLOOKUP`, `ROUND`, `CONCAT`, `STDEV`…), cell refs, ranges, error values, **charts**. | `.xlsx` `.csv` |
+| 📽️ | **Impress** | 16:9 slides, text/shapes/images, drag-and-resize, inspector with **font picker**, **fullscreen present mode**. | `.pptx` `.pdf` `.json` |
 | 📄 | **Text Editor** | Tabbed, line numbers, real tab key, find, word/char count. Multi-format. | any text |
 | 📕 | **PDF Tools** | View, **merge**, **split** (page ranges), reorder, rotate, delete, **add text**, **sign by drawing**, export. | `.pdf` |
+| 📖 | **Markdown** | Split-pane editor with **live preview**, GFM rendering (tables, task lists, code), print & HTML export. | `.md` `.html` |
 
-### Honest limitation
+Every document tool has a **＋ New** button to start a fresh document instantly
+(it asks before discarding unsaved work).
+
+## Fonts
+
+The font menus offer two groups:
+
+- **System fonts** (Calibri, Segoe UI, Cambria, Consolas, …) — whatever the
+  host PC already has. Nothing to download.
+- **Bundled fonts** — **Inter**, **Lora**, and **JetBrains Mono**, shipped as
+  variable WOFF2 files in `lib/fonts/` (~220 KB total, all weights + italics).
+  These render identically on every PC, fully offline, and survive into
+  `.pptx` export. Licensed under the SIL Open Font License — see
+  `lib/fonts/OFL-LICENSES.md`.
+
+### Honest limitations
 
 Editing *existing* text baked into a PDF (rewriting words already in the file)
 isn't supported — even LibreOffice struggles with that. You can add text,
 signatures, images, and restructure pages freely.
+
+**PDF export** (Writer and Impress) draws text with jsPDF's built-in standard
+fonts (Helvetica) — custom fonts are preserved in `.docx` / `.pptx` exports and
+in printed output, but not in generated PDFs. System fonts in `.docx`/`.pptx`
+also depend on the recipient's PC having them installed.
 
 ## Quick start
 
@@ -69,8 +90,8 @@ Just open **[donne4real.github.io/PocketOffice](https://donne4real.github.io/Poc
 
 | Shortcut | Action |
 |----------|--------|
-| `Alt+1`…`Alt+5` | Switch between the five tools |
-| `Ctrl+S` | Save current document (Writer, Text Editor) |
+| `Alt+1`…`Alt+6` | Switch between the six tools |
+| `Ctrl+S` | Save current document (Writer, Text Editor, Markdown) |
 | `Ctrl+Shift+T` | Toggle dark mode |
 | `Ctrl+B` / `I` / `U` | Bold / italic / underline (Writer) |
 | `F2` | Edit current cell (Calc) |
@@ -86,7 +107,8 @@ PocketOffice/
 ├── README.md  START-HERE.txt  LICENSE
 ├── samples/                ← .docx, .xlsx, .pptx to test with
 ├── css/app.css             ← shared theme (light + dark)
-├── lib/                    ← 9 vendored libraries, ~4 MB, no network at runtime
+├── css/fonts.css           ← @font-face for the bundled fonts
+├── lib/                    ← vendored libraries, no network at runtime
 │   ├── pdf.min.js + pdf.worker.min.js   ← pdf.js: render existing PDFs
 │   ├── pdf-lib.min.js                   ← manipulate PDFs (merge/split/draw)
 │   ├── jspdf.umd.min.js                 ← export Writer/Impress → PDF
@@ -94,24 +116,31 @@ PocketOffice/
 │   ├── docx.umd.js                      ← Writer → real .docx
 │   ├── mammoth.browser.js               ← reads existing .docx → HTML
 │   ├── jszip.min.js                     ← required by pptxgenjs
-│   └── pptxgenjs.min.js                 ← Impress → real .pptx
+│   ├── pptxgenjs.min.js                 ← Impress → real .pptx
+│   ├── chart.umd.min.js                 ← charts in Calc
+│   ├── marked.min.js                    ← markdown rendering
+│   └── fonts/                           ← Inter, Lora, JetBrains Mono (OFL)
 └── js/                     ← vanilla JS, classic <script> tags, no build step
     ├── app.js              ← shell: tabs, theme, status bar, boot
-    ├── storage.js          ← IndexedDB autosave + File System Access API
-    ├── texteditor.js  word.js  calc.js  impress.js  pdftools.js
+    ├── storage.js          ← IndexedDB autosave, File System Access, shared UI
+    ├── texteditor.js  word.js  calc.js  impress.js
+    ├── pdftools.js  markdown.js
+    └── fonts lists + dialogs live in storage.js (shared by every tool)
 ```
 
 Everything is **vanilla JS** with classic `<script>` tags — no build step,
-no bundler, no ES modules (those break on `file://`). The app code (~3,000
-lines) is readable and tweakable.
+no bundler, no ES modules (those break on `file://`). The app code is
+readable and tweakable; add a font by dropping a WOFF2 into `lib/fonts/`,
+declaring it in `css/fonts.css`, and adding the name to the `Fonts` lists
+in `js/storage.js`.
 
 ## Privacy
 
 **100% local.** No data leaves the machine — not in the USB version, not in
 the live demo. No telemetry, no accounts, no analytics, no network calls of
-any kind at runtime. Every library is in `lib/`. Your documents live either
-in your browser's IndexedDB (autosave) or wherever you choose to save them
-on disk.
+any kind at runtime. Every library and font is in `lib/`. Your documents live
+either in your browser's IndexedDB (autosave) or wherever you choose to save
+them on disk.
 
 ## Build the standalone single-file version
 
@@ -119,10 +148,12 @@ Want everything inlined into one `.html` for email-friendly distribution?
 
 ```bash
 node _build-single-file.js
-# → produces PocketOffice-standalone.html (~3.8 MB)
+# → produces PocketOffice-standalone.html (~5.5 MB, fonts and the
+#    pdf.js worker embedded as data URLs — truly one file)
 ```
 
-(That script is included in the repo but git-ignored output.)
+(The build script is tracked in the repo; only the generated `.html` is
+git-ignored.)
 
 ## Credits
 
@@ -138,6 +169,9 @@ Built with these excellent open-source libraries, all bundled locally:
 | [mammoth.js](https://github.com/mwilliamson/mammoth.js) | BSD-2-Clause | Reading `.docx` |
 | [JSZip](https://stuk.github.io/jszip/) | MIT | Zip handling |
 | [PptxGenJS](https://gitbrent.github.io/PptxGenJS/) | MIT | PowerPoint generation |
+| [Chart.js](https://www.chartjs.org/) | MIT | Calc charts |
+| [marked](https://marked.js.org/) | MIT | Markdown rendering |
+| [Inter](https://rsms.me/inter/) · [Lora](https://github.com/cyrealtype/Lora-Cyrillic) · [JetBrains Mono](https://www.jetbrains.com/lp/mono/) | SIL OFL 1.1 | Bundled fonts |
 
 PocketOffice itself is plain vanilla JS — read it, learn from it, change it.
 

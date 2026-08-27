@@ -910,11 +910,38 @@ const Calc = (() => {
       .then(ok => {
         if (!ok) return;
         snapshot();
-        for (const k of Object.keys(data)) delete data[k];
+        wipeData();
         charts.length = 0;
         renderCharts();
-        renderAll(); markDirty();
+        markDirty();
       });
+  }
+
+  // Delete every cell and clear their on-screen text. renderAll() only walks
+  // keys still present in `data`, so wiped cells must be re-rendered explicitly
+  // or their stale display lingers.
+  function wipeData() {
+    const wiped = Object.keys(data);
+    for (const k of wiped) delete data[k];
+    wiped.forEach(renderCell);
+    return wiped;
+  }
+
+  // Start a fresh blank sheet (asks before discarding current content).
+  function newSheet() {
+    const hasContent = Object.keys(data).length > 0 || charts.length > 0;
+    const reset = () => {
+      snapshot();
+      wipeData();
+      charts.length = 0;
+      renderCharts();
+      recalcAll();
+      markDirty();
+      setActive('A1');
+    };
+    if (!hasContent) { reset(); return; }
+    UI.confirm({ title: 'New sheet?', message: 'Erase all cells and charts in this sheet. Unsaved changes will be lost.', okText: 'Discard & start new', danger: true })
+      .then(ok => { if (ok) reset(); });
   }
 
   // ---------- Import / Export ----------
@@ -930,7 +957,7 @@ const Calc = (() => {
       if (!ws) { UI.toast('No sheets in file', 'warn'); return; }
       // Wipe current data
       snapshot();
-      for (const k of Object.keys(data)) delete data[k];
+      wipeData();
       charts.length = 0;
       const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
       for (let r = range.s.r; r <= Math.min(range.e.r, ROWS - 1); r++) {
@@ -1061,7 +1088,7 @@ const Calc = (() => {
     return { cells: dump, charts: Util.deepClone(charts) };
   }
   function restoreCalcState(s) {
-    for (const k of Object.keys(data)) delete data[k];
+    wipeData();
     for (const k of Object.keys(s.cells)) data[k] = { raw: s.cells[k] };
     charts.length = 0;
     if (Array.isArray(s.charts)) charts.push(...Util.deepClone(s.charts));
@@ -1139,6 +1166,7 @@ const Calc = (() => {
       b.innerHTML = label; b.title = title || '';
       b.onclick = fn; return b;
     };
+    tb.appendChild(btn('＋ New', newSheet, 'New blank sheet'));
     tb.appendChild(btn('📂 Open', importFile, 'Import .xlsx / .csv'));
     tb.appendChild(btn('💾 Export ▾', () => exportMenu(), 'Export'));
     tb.appendChild(btn('🖨️', () => printDoc(), 'Print'));

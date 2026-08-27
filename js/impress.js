@@ -62,6 +62,20 @@ const Impress = (() => {
     markDirty();
   }
 
+  // Start a fresh presentation (asks before discarding the current deck).
+  function newPresentation() {
+    const isFreshDeck = slides.length === 1 &&
+      slides[0].elements && slides[0].elements.length === 1 &&
+      slides[0].elements[0].text === 'Click to edit title';
+    const go = () => { snapshot(); newDeck(); };
+    if (isFreshDeck) { go(); return; }
+    UI.confirm({
+      title: 'New presentation?',
+      message: 'The current deck will be discarded. Unsaved slides will be lost.',
+      okText: 'Discard & start new', danger: true,
+    }).then(ok => { if (ok) go(); });
+  }
+
   // ---------- Layout ----------
   function buildLayout() {
     const root = $('impressContent');
@@ -101,6 +115,7 @@ const Impress = (() => {
     };
     const sep = () => { const s=document.createElement('span'); s.className='tb-sep'; return s; };
 
+    tb.appendChild(btn('＋ New', newPresentation, 'New presentation'));
     tb.appendChild(btn('📂 Open', openPresentation, 'Open .pptx or .json'));
     tb.appendChild(btn('＋ Slide', addSlide, 'Add slide'));
     tb.appendChild(btn('Duplicate', () => duplicateSlide(current), 'Duplicate current'));
@@ -161,6 +176,7 @@ const Impress = (() => {
     if (el.kind === 'text') {
       d.style.display = 'flex'; d.style.alignItems = 'center'; d.style.justifyContent = el.align === 'center' ? 'center' : el.align === 'right' ? 'flex-end' : 'flex-start';
       d.style.color = el.color || '#000'; d.style.fontWeight = el.bold ? '700' : '400';
+      d.style.fontFamily = el.fontFamily || '';
       d.style.fontSize = Math.max(4, (el.fontSize || 18) / 6) + 'px';
       d.style.padding = '0 2px'; d.style.overflow = 'hidden'; d.style.whiteSpace = 'pre-wrap';
       d.textContent = el.text || '';
@@ -200,6 +216,7 @@ const Impress = (() => {
       node.style.color = el.color || '#000';
       node.style.fontWeight = el.bold ? '700' : '400';
       node.style.fontStyle = el.italic ? 'italic' : '';
+      node.style.fontFamily = el.fontFamily || '';
       node.style.fontSize = (el.fontSize || 18) + 'px';
       node.style.textAlign = el.align || 'left';
       node.style.display = 'flex';
@@ -366,6 +383,10 @@ const Impress = (() => {
       <div class="imp-field"><label>Width</label><input type="number" id="iW" value="${el.w.toFixed(1)}"></div>
       <div class="imp-field"><label>Height</label><input type="number" id="iH" value="${el.h.toFixed(1)}"></div>
       ${el.kind === 'text' ? `
+        <div class="imp-field"><label>Font</label><select id="iFont">
+          <option value="">Theme default</option>
+          ${Fonts.options(el.fontFamily || '')}
+        </select></div>
         <div class="imp-field"><label>Font size</label><input type="number" id="iFS" value="${el.fontSize || 18}"></div>
         <div class="imp-field"><label>Color</label><input type="color" id="iCol" value="${el.color || '#000000'}"></div>
         <div class="imp-field"><label>Align</label><select id="iAlign">
@@ -386,6 +407,7 @@ const Impress = (() => {
     `;
     const bindNum = (id, prop) => { const e = ins.querySelector(id); if (e) e.onchange = () => { el[prop] = +e.value; renderCanvas(); renderSlideList(); markDirty(); }; };
     bindNum('#iX','x'); bindNum('#iY','y'); bindNum('#iW','w'); bindNum('#iH','h');
+    const iFont = ins.querySelector('#iFont'); if (iFont) iFont.onchange = () => { el.fontFamily = iFont.value || undefined; renderCanvas(); renderSlideList(); markDirty(); };
     const iFS = ins.querySelector('#iFS'); if (iFS) iFS.onchange = () => { el.fontSize = +iFS.value; renderCanvas(); markDirty(); };
     const iCol = ins.querySelector('#iCol'); if (iCol) iCol.oninput = () => { el.color = iCol.value; renderCanvas(); renderSlideList(); markDirty(); };
     const iAlign = ins.querySelector('#iAlign'); if (iAlign) iAlign.onchange = () => { el.align = iAlign.value; renderCanvas(); markDirty(); };
@@ -624,7 +646,7 @@ const Impress = (() => {
 
     // Text body
     const txBody = find(sp, ['txBody']);
-    let text = '', fontSize = 18, bold = false, italic = false, color = '#222222', align = 'left';
+    let text = '', fontSize = 18, bold = false, italic = false, color = '#222222', align = 'left', fontFamily = '';
     if (txBody) {
       // Concatenate all <a:t> runs, joining paragraphs with \n
       const paras = findAll(txBody, 'p');
@@ -664,6 +686,8 @@ const Impress = (() => {
             if (attr(rPr, 'i') === '1') italic = true;
             const clrEl = find(rPr, ['solidFill','srgbClr']);
             if (clrEl) color = '#' + attr(clrEl, 'val');
+            const latinEl = find(rPr, ['latin']);
+            if (latinEl) fontFamily = attr(latinEl, 'typeface') || '';
           }
         }
       }
@@ -675,11 +699,11 @@ const Impress = (() => {
 
     // If there is text and no explicit fill shape geometry, treat as a text box.
     if (text && (noFill || !fill)) {
-      return { kind: 'text', x: xp, y: yp, w: wp, h: hp, text, fontSize, bold, italic, color, align };
+      return { kind: 'text', x: xp, y: yp, w: wp, h: hp, text, fontSize, bold, italic, color, align, fontFamily: fontFamily || undefined };
     }
     if (text) {
       // A filled shape with text inside — keep as shape but carry the text.
-      return { kind, x: xp, y: yp, w: wp, h: hp, fill: fill || '#4a90e2', text, fontSize, bold, italic, color, align };
+      return { kind, x: xp, y: yp, w: wp, h: hp, fill: fill || '#4a90e2', text, fontSize, bold, italic, color, align, fontFamily: fontFamily || undefined };
     }
     return { kind, x: xp, y: yp, w: wp, h: hp, fill: fill || '#4a90e2' };
   }
@@ -765,6 +789,7 @@ const Impress = (() => {
       d.style.justifyContent = el.align === 'center' ? 'center' : el.align === 'right' ? 'flex-end' : 'flex-start';
       d.style.color = el.color || '#000'; d.style.fontWeight = el.bold ? '700' : '400';
       d.style.fontStyle = el.italic ? 'italic' : '';
+      d.style.fontFamily = el.fontFamily || '';
       d.style.fontSize = ((el.fontSize || 18) * 2) + 'px';
       d.style.whiteSpace = 'pre-wrap'; d.style.padding = '0 8px';
       d.textContent = el.text || '';
@@ -787,6 +812,7 @@ const Impress = (() => {
         elements: (s.elements || []).map(el => {
           const e = { id: el.id, kind: el.kind, x: el.x, y: el.y, w: el.w, h: el.h };
           if (el.text != null) e.text = el.text;
+          if (el.fontFamily) e.fontFamily = el.fontFamily;
           if (el.fontSize != null) e.fontSize = el.fontSize;
           if (el.bold) e.bold = true;
           if (el.italic) e.italic = true;
@@ -878,6 +904,7 @@ const Impress = (() => {
               valign: 'middle',
               wrap: true,
             });
+            if (el.fontFamily) opts.fontFace = el.fontFamily;
             slide.addText(el.text || '', opts);
           } else if (el.kind === 'rect') {
             Object.assign(opts, { fill: { color: hexNo(el.fill || '#4a90e2') }, line: { color: hexNo(el.fill || '#4a90e2') } });
