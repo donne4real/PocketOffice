@@ -36,17 +36,23 @@ three constraints:
 
 ## The six tools
 
+All four document tools — Writer, Calc, Impress, Text Editor — are
+**multi-document**: open as many files as you like, each in its own tab.
+Tabs autosave with their content and are restored on the next launch.
+Opening a file into a pristine untitled tab reuses it (browser-style);
+closing a tab with unsaved work asks first.
+
 | | Tool | Highlights | Formats |
 |---|------|------------|---------|
-| 📝 | **Writer** | Full rich-text toolbar: font/color/headings/lists/tables/images/links, find-replace, autosave, **21 fonts** (incl. 3 bundled). Reads **and** writes `.docx`. | `.docx` `.pdf` `.html` `.txt` |
-| 📊 | **Calc** | 1000×100 grid + hand-written formula engine (60+ functions: `SUM`, `IF`, `VLOOKUP`, `ROUND`, `CONCAT`, `STDEV`…), cell refs, ranges, error values, **charts**. | `.xlsx` `.csv` |
-| 📽️ | **Impress** | 16:9 slides, text/shapes/images, drag-and-resize, inspector with **font picker**, **fullscreen present mode**. | `.pptx` `.pdf` `.json` |
+| 📝 | **Writer** | Tabbed rich-text editor: font/color/headings/lists/tables/images/links, find-replace, autosave, **21 fonts** (incl. 3 bundled). Reads **and** writes `.docx`. | `.docx` `.pdf` `.html` `.txt` |
+| 📊 | **Calc** | Tabbed sheets: 1000×100 grid, hand-written formula engine (60+ functions: `SUM`, `IF`, `VLOOKUP`, `ROUND`, `CONCAT`, `STDEV`…), error values, **charts**. | `.xlsx` `.csv` |
+| 📽️ | **Impress** | Tabbed decks: 16:9 slides, text/shapes/images, drag-and-resize, inspector with **font picker**, **fullscreen present mode**. | `.pptx` `.pdf` `.json` |
 | 📄 | **Text Editor** | Tabbed, line numbers, real tab key, find, word/char count. Multi-format. | any text |
 | 📕 | **PDF Tools** | View, **merge**, **split** (page ranges), reorder, rotate, delete, **add text**, **sign by drawing**, export. | `.pdf` |
 | 📖 | **Markdown** | Split-pane editor with **live preview**, GFM rendering (tables, task lists, code), print & HTML export. | `.md` `.html` |
 
-Every document tool has a **＋ New** button to start a fresh document instantly
-(it asks before discarding unsaved work).
+Every document tool also has a **＋ New** button (toolbar and tab strip) to
+start a fresh document in a new tab instantly.
 
 ## Fonts
 
@@ -123,9 +129,9 @@ PocketOffice/
 └── js/                     ← vanilla JS, classic <script> tags, no build step
     ├── app.js              ← shell: tabs, theme, status bar, boot
     ├── storage.js          ← IndexedDB autosave, File System Access, shared UI
+    │                          + the Fonts lists and the shared Tabs strip
     ├── texteditor.js  word.js  calc.js  impress.js
     ├── pdftools.js  markdown.js
-    └── fonts lists + dialogs live in storage.js (shared by every tool)
 ```
 
 Everything is **vanilla JS** with classic `<script>` tags — no build step,

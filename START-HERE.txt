@@ -1,12 +1,14 @@
 ============================================================
-  PocketOffice v1.2.4 — how to run it on a restricted PC
+  PocketOffice v1.3.0 — how to run it on a restricted PC
 ============================================================
 
 WHAT IT IS
   A complete office suite that runs inside a web browser.
   No installation. No admin rights. No internet needed.
   Six tools: Writer, Calc, Impress, Text Editor, PDF Tools,
-  Markdown.
+  Markdown. Writer, Calc, Impress and the Text Editor all
+  support MULTIPLE documents at once — every open document
+  gets its own tab, and tabs are remembered between runs.
 
 ------------------------------------------------------------
 STEP 1 — Copy this whole "PocketOffice" folder to the PC
@@ -49,8 +51,11 @@ STEP 3 — Use it
       PDF Tools     open & view PDFs
       Markdown      live-preview markdown editor
 
-  * ＋ NEW starts a fresh document in Writer, Calc, Impress
-    (it asks before discarding unsaved work).
+  * MULTIPLE DOCUMENTS: Writer, Calc, Impress and Text Editor
+    each have a tab strip under the toolbar. ＋ New (toolbar or
+    tab strip) opens a fresh document in a new tab; the ✕ on a
+    tab closes it (asking first if there is unsaved work).
+    Tabs are restored the next time you open PocketOffice.
 
   * FONTS: Writer and Impress offer 18 system fonts plus
     Inter, Lora and JetBrains Mono — these three are bundled

@@ -424,3 +424,45 @@ const Fonts = (() => {
   return { SYSTEM, BUNDLED, options };
 })();
 
+/* --------------------------------------------------------------------------
+   Tabs — the multi-document tab strip shared by Writer, Calc and Impress.
+   Renders the same .te-tab markup the Text Editor uses, so all four tools
+   look identical (and the print styles already hide it). Items are
+   { id, name, dirty }. The strip owns no state; the tool re-renders it.
+   -------------------------------------------------------------------------- */
+const Tabs = (() => {
+  function create({ mount, onActivate, onClose, onNew, newTitle = 'New' }) {
+    const strip = document.createElement('div');
+    strip.className = 'te-tabs';
+    mount.appendChild(strip);
+    function render(list, activeId) {
+      strip.innerHTML = '';
+      list.forEach(d => {
+        const t = document.createElement('div');
+        t.className = 'te-tab' + (d.id === activeId ? ' active' : '') + (d.dirty ? ' dirty' : '');
+        t.title = d.name;
+        const nm = document.createElement('span');
+        nm.className = 'name';
+        nm.textContent = d.name;
+        t.appendChild(nm);
+        const x = document.createElement('span');
+        x.className = 'close';
+        x.textContent = '✕';
+        x.title = 'Close';
+        x.onclick = (e) => { e.stopPropagation(); onClose(d.id); };
+        t.appendChild(x);
+        t.onclick = () => { if (d.id !== activeId) onActivate(d.id); };
+        strip.appendChild(t);
+      });
+      const plus = document.createElement('button');
+      plus.className = 'te-new';
+      plus.textContent = '＋ New';
+      plus.title = newTitle;
+      plus.onclick = onNew;
+      strip.appendChild(plus);
+    }
+    return { render };
+  }
+  return { create };
+})();
+

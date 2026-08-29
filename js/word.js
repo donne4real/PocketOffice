@@ -5,14 +5,26 @@
    ========================================================================== */
 
 const Writer = (() => {
-  let docHandle = null;       // FileSystemFileHandle for "Save" reuse
-  let docName = 'Untitled-1.html';
-  let untitledSeq = 1;
-  let dirty = false;
+  // Open documents: { id, name, handle, dirty, html }. The active tab's
+  // content lives in the editor DOM; inactive tabs park theirs in .html.
+  const docs = [];
+  let activeId = null;
+  let docSeq = 1;
   let autosaveTimer = null;
+  let tabs = null;            // shared tab strip (see Tabs in storage.js)
 
   const $ = (id) => document.getElementById(id);
   let editor = null;          // the contenteditable div
+
+  function activeDoc() { return docs.find(d => d.id === activeId); }
+  function docKey() { return 'writer:' + activeId; }
+  // A pristine untitled tab (never typed in, never saved) can be reused in
+  // place when opening a file — browser-style.
+  function isPristine() {
+    const d = activeDoc();
+    return !!d && !d.dirty && /^Untitled-\d+\.html$/.test(d.name) &&
+      editor.textContent.trim() === '' && !editor.querySelector('img, table, hr, a');
+  }
 
   // ----- Toolbar definition (rendered into #writerToolbar) -----
   const SIZES = [1, 2, 3, 4, 5, 6, 7];   // document.execCommand fontSize uses 1..7
@@ -133,7 +145,8 @@ const Writer = (() => {
     name.className = 'tb-label';
     name.id = 'writerDocName';
     name.style.marginLeft = 'auto';
-    name.textContent = docName + (dirty ? ' •' : '');
+    const d0 = activeDoc();
+    name.textContent = (d0 ? d0.name : '') + (d0 && d0.dirty ? ' •' : '');
     tb.appendChild(name);
   }
 
@@ -195,7 +208,7 @@ const Writer = (() => {
     editor.focus();
     // Snapshot before formatting actions so each is one undo entry.
     if (cmd !== 'undo' && cmd !== 'redo') {
-      History.snapshot('writer', editor.innerHTML, (html) => { editor.innerHTML = html; markDirty(); });
+      History.snapshot(docKey(), editor.innerHTML, (html) => { editor.innerHTML = html; markDirty(); });
       undoArmed = false;
     }
     // Some browsers want styleWithCSS on for color/hilite.
@@ -317,27 +330,82 @@ const Writer = (() => {
   }
 
   // ----- Open / Save / Export -----
-  // Start a fresh blank document (asks before discarding current content).
-  async function newDoc() {
-    const hasContent = editor.textContent.trim() !== '' ||
-                       editor.querySelector('img, table, hr, a');
-    if (hasContent) {
-      const ok = await UI.confirm({
-        title: 'New document?',
-        message: 'The current document will be discarded. Unsaved changes will be lost.',
-        okText: 'Discard & start new', danger: true,
-      });
-      if (!ok) return;
-    }
-    editor.innerHTML = '<p><br></p>';
-    docName = 'Untitled-' + (++untitledSeq) + '.html';
-    docHandle = null;
-    dirty = false;
-    updateName();
-    History.reset('writer');
-    autosaveSoon();
-    updateStatus();
+  // Start a fresh document in a new tab (nothing is discarded).
+  function newDoc() {
+    addDoc();
     editor.focus();
+  }
+
+  function addDoc({ name = null, html = '<p><br></p>', handle = null } = {}) {
+    const n = docSeq++;
+    const id = 'w' + n;
+    if (!name) name = 'Untitled-' + n + '.html';
+    const doc = { id, name, handle, dirty: false, html };
+    docs.push(doc);
+    activateDoc(id);
+    autosaveSoon();   // persist the new tab in the session manifest soon
+    return doc;
+  }
+
+  function activateDoc(id) {
+    const cur = activeDoc();
+    if (cur) cur.html = editor.innerHTML;
+    activeId = id;
+    const d = activeDoc();
+    editor.innerHTML = d.html || '<p><br></p>';
+    undoArmed = false;   // a fresh tab starts a fresh undo burst
+    clearTimeout(undoTimer);
+    // Initialize undo once per document — switching tabs must NOT wipe a
+    // doc's accumulated undo stack, so guard with a per-doc flag.
+    if (!d.historyReady) {
+      History.reset('writer:' + id);
+      History.registerCurrentSnapshot('writer:' + id,
+        () => editor.innerHTML,
+        (html) => { editor.innerHTML = html; markDirty(); });
+      d.historyReady = true;
+    }
+    updateName(); renderTabs(); updateStatus();
+  }
+
+  function closeDoc(id) {
+    const i = docs.findIndex(d => d.id === id);
+    if (i < 0) return;
+    const d = docs[i];
+    const doClose = () => {
+      docs.splice(i, 1);
+      if (activeId === id) {
+        activeId = null;
+        if (docs.length) activateDoc(docs[Math.max(0, i - 1)].id);
+        else addDoc();
+      } else {
+        renderTabs();
+      }
+      autosaveSoon();
+    };
+    if (d.dirty) {
+      UI.confirm({ title: `Close ${d.name}?`, message: 'Unsaved changes will be lost.', okText: 'Close anyway', danger: true })
+        .then(ok => { if (ok) doClose(); });
+    } else {
+      doClose();
+    }
+  }
+
+  function renderTabs() {
+    if (!tabs) return;
+    tabs.render(docs.map(d => ({ id: d.id, name: d.name, dirty: d.dirty })), activeId);
+  }
+
+  // Load opened file content into the pristine active tab, or a new tab.
+  function openIntoDoc(name, handle, html) {
+    if (isPristine()) {
+      const d = activeDoc();
+      editor.innerHTML = html;
+      d.name = name; d.handle = handle; d.dirty = false;
+      History.reset(docKey());
+      updateName(); renderTabs(); autosaveSoon();
+    } else {
+      addDoc({ name, handle, html });
+    }
   }
 
   async function openDoc() {
@@ -367,17 +435,12 @@ const Writer = (() => {
       }
       const text = await f.text();
       if (ext === 'html' || ext === 'htm') {
-        editor.innerHTML = sanitizeHtml(text);
+        openIntoDoc(f.name, f.handle || null, sanitizeHtml(text));
       } else {
         // Plain text: convert to paragraphs
-        editor.innerHTML = text.split(/\r?\n/).map(l => `<p>${escapeHtml(l) || '<br>'}</p>`).join('');
+        const html = text.split(/\r?\n/).map(l => `<p>${escapeHtml(l) || '<br>'}</p>`).join('');
+        openIntoDoc(f.name, f.handle || null, html);
       }
-      docName = f.name;
-      docHandle = f.handle || null;
-      dirty = false;
-      updateName();
-      autosaveSoon();
-      History.reset('writer');
       UI.toast(`Opened ${f.name}`, 'success');
     } catch (e) {
       if (e.name !== 'AbortError') UI.toast('Open failed: ' + e.message, 'error');
@@ -396,13 +459,7 @@ const Writer = (() => {
       const ab = f.bytes.buffer.slice(f.bytes.byteOffset, f.bytes.byteOffset + f.bytes.byteLength);
       const result = await window.mammoth.convertToHtml({ arrayBuffer: ab });
       const html = result.value || '<p><br></p>';
-      editor.innerHTML = sanitizeHtml(html);
-      docName = f.name;
-      docHandle = f.handle || null;
-      dirty = false;
-      updateName();
-      autosaveSoon();
-      History.reset('writer');
+      openIntoDoc(f.name, f.handle || null, sanitizeHtml(html));
       const warns = (result.messages || []).filter(m => m.type === 'warning').length;
       UI.toast(`Opened ${f.name}${warns ? ` (${warns} formatting hints skipped)` : ''}`, 'success');
     } catch (e) {
@@ -432,25 +489,27 @@ const Writer = (() => {
   }
 
   async function saveDoc(asNew) {
-    const ext = docName.split('.').pop().toLowerCase();
+    const d = activeDoc(); if (!d) return;
+    const ext = d.name.split('.').pop().toLowerCase();
     // Default save format = .html (round-trips cleanly); user picks others via Export.
-    const outName = (ext === 'html' || ext === 'htm' || ext === 'txt') ? docName : docName.replace(/\.[^.]*$/, '') + '.html';
+    const outName = (ext === 'html' || ext === 'htm' || ext === 'txt') ? d.name : d.name.replace(/\.[^.]*$/, '') + '.html';
     let content, mime;
     if (outName.endsWith('.txt')) {
       content = editor.innerText;
       mime = 'text/plain';
     } else {
-      content = '<!DOCTYPE html>\n<html><head><meta charset="utf-8"><title>' + escapeHtml(stripExt(docName)) +
+      content = '<!DOCTYPE html>\n<html><head><meta charset="utf-8"><title>' + escapeHtml(stripExt(d.name)) +
         '</title></head><body>\n' + editor.innerHTML + '\n</body></html>';
       mime = 'text/html';
     }
     const bytes = new TextEncoder().encode(content);
     try {
-      const res = await FS.save({ name: outName, mime, bytes, handle: asNew ? null : docHandle });
-      if (res.handle) docHandle = res.handle;
-      docName = outName;
-      dirty = false;
+      const res = await FS.save({ name: outName, mime, bytes, handle: asNew ? null : d.handle });
+      if (res.handle) d.handle = res.handle;
+      d.name = outName;
+      d.dirty = false;
       updateName();
+      renderTabs();
       autosaveSoon();
       UI.toast(res.downloaded ? `Downloaded ${outName}` : `Saved ${outName}`, 'success');
     } catch (e) {
@@ -475,7 +534,8 @@ const Writer = (() => {
   }
 
   async function doExport(fmt) {
-    const base = stripExt(docName);
+    const d = activeDoc(); if (!d) return;
+    const base = stripExt(d.name);
     try {
       if (fmt === 'html') {
         const html = '<!DOCTYPE html>\n<html><head><meta charset="utf-8"><title>' + escapeHtml(base) +
@@ -642,25 +702,27 @@ const Writer = (() => {
     if (undoArmed) return;
     undoArmed = true;
     const snap = editor.innerHTML;
-    History.snapshot('writer', snap, (html) => { editor.innerHTML = html; markDirty(); });
+    History.snapshot(docKey(), snap, (html) => { editor.innerHTML = html; markDirty(); });
   }
   function scheduleSnapshot() {
     clearTimeout(undoTimer);
     undoTimer = setTimeout(() => { undoArmed = false; }, 600);
     armSnapshot();
   }
-  function doUndo() { History.undo('writer'); }
-  function doRedo() { History.redo('writer'); }
+  function doUndo() { History.undo(docKey()); }
+  function doRedo() { History.redo(docKey()); }
 
   // ----- Dirty + autosave -----
   function markDirty() {
-    if (!dirty) { dirty = true; updateName(); }
+    const d = activeDoc();
+    if (d && !d.dirty) { d.dirty = true; updateName(); renderTabs(); }
     autosaveSoon();
     updateStatus();
   }
   function updateName() {
     const el = $('writerDocName');
-    if (el) el.textContent = docName + (dirty ? ' •' : '');
+    const d = activeDoc();
+    if (el) el.textContent = (d ? d.name : '') + (d && d.dirty ? ' •' : '');
   }
   function updateStatus() {
     const info = $('statusInfo');
@@ -674,7 +736,12 @@ const Writer = (() => {
     clearTimeout(autosaveTimer);
     autosaveTimer = setTimeout(async () => {
       try {
-        await Storage.save('writer:doc', { html: editor.innerHTML, name: docName });
+        await Storage.save('writer:docs', {
+          docs: docs.map(d => ({
+            id: d.id, name: d.name, dirty: d.dirty,
+            html: d.id === activeId ? editor.innerHTML : d.html,
+          })),
+        });
         const el = $('statusAutosave');
         if (el) {
           const t = new Date().toLocaleTimeString();
@@ -714,11 +781,13 @@ const Writer = (() => {
 
     buildToolbar();
 
-    // Register undo: capture + restore current innerHTML.
-    History.registerCurrentSnapshot('writer',
-      () => editor.innerHTML,
-      (html) => { editor.innerHTML = html; markDirty(); });
-    History.reset('writer');
+    tabs = Tabs.create({
+      mount: $('writerTabs'),
+      onActivate: activateDoc,
+      onClose: closeDoc,
+      onNew: newDoc,
+      newTitle: 'New document',
+    });
 
     editor.addEventListener('input', () => { scheduleSnapshot(); markDirty(); });
     editor.addEventListener('keyup', updateToolbarState);
@@ -731,16 +800,33 @@ const Writer = (() => {
       }
     });
 
-    // Restore last session
+    // Restore last session: the open tabs and their content.
     try {
-      const saved = await Storage.load('writer:doc');
-      if (saved && saved.html) {
-        editor.innerHTML = saved.html;
-        if (saved.name) { docName = saved.name; }
-        updateName();
-        History.reset('writer');
+      const saved = await Storage.load('writer:docs');
+      if (saved && Array.isArray(saved.docs) && saved.docs.length) {
+        saved.docs.forEach((s, i) => {
+          docs.push({
+            id: s.id || ('w' + (i + 1)),
+            name: s.name || 'Untitled.html',
+            handle: null,
+            dirty: !!s.dirty,
+            html: s.html || '<p><br></p>',
+          });
+        });
+        docSeq = docs.length + 1;
+        activateDoc(docs[0].id);
+      } else {
+        // Migrate the pre-tabs single-document autosave (v1.2.x).
+        const legacy = await Storage.load('writer:doc');
+        if (legacy && legacy.html) {
+          addDoc({ name: legacy.name || 'Untitled-1.html', html: legacy.html });
+        } else {
+          addDoc();
+        }
       }
-    } catch (e) { /* ignore */ }
+    } catch (e) {
+      if (!docs.length) addDoc();
+    }
     updateStatus();
   }
 

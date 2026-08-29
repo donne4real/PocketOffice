@@ -8,15 +8,29 @@
 const Calc = (() => {
   const COLS = 100;       // A..CV
   const ROWS = 1000;
+  // Multi-sheet: each sheet owns { id, name, data, charts, activeCell }.
+  // The live `data`/`charts`/`activeCell` bindings point at the active sheet;
+  // all mutations go through them, so the sheet objects stay in sync.
+  const sheets = [];
+  let activeSheetId = null;
+  let sheetSeq = 1;
+  let tabs = null;
   // cell key = "A1" etc.  data[key] = { raw: string typed, value: computed }
-  const data = Object.create(null);
+  let data = Object.create(null);
   // Dependencies for incremental recalc (kept simple): we just re-eval all formulas.
   let activeCell = 'A1';
   let editingCell = null;
+  let switchingSheet = false;   // suppresses the fx blur-commit during a sheet switch
   let dirty = false;
   let autosaveTimer = null;
 
   const $ = (id) => document.getElementById(id);
+
+  function activeSheet() { return sheets.find(s => s.id === activeSheetId); }
+  function sheetKey() { return 'calc:' + activeSheetId; }
+  function sheetHasContent(s) {
+    return Object.keys(s.data).length > 0 || (s.charts && s.charts.length > 0);
+  }
 
   // ---------- Address helpers ----------
   function colName(idx) {   // 0 -> A, 25 -> Z, 26 -> AA
@@ -504,7 +518,7 @@ const Calc = (() => {
 
   // ---------- Charts ----------
   // Each chart: { id, type: 'bar'|'line'|'pie', range, title, x, y, w, h }
-  const charts = [];
+  let charts = [];
   let chartSeq = 1;
 
   function addChartDialog(editChart = null) {
@@ -927,21 +941,86 @@ const Calc = (() => {
     return wiped;
   }
 
-  // Start a fresh blank sheet (asks before discarding current content).
+  // Start a fresh sheet in a new tab (nothing is discarded).
   function newSheet() {
-    const hasContent = Object.keys(data).length > 0 || charts.length > 0;
-    const reset = () => {
-      snapshot();
-      wipeData();
-      charts.length = 0;
-      renderCharts();
-      recalcAll();
+    addSheet();
+  }
+
+  // ---------- Multi-sheet lifecycle ----------
+  function addSheetRaw({ name = null, data: d = null, charts: c = [] } = {}) {
+    const n = sheetSeq++;
+    const id = 's' + n;
+    if (!name) name = 'Sheet-' + n;
+    const sheet = { id, name, data: d || Object.create(null), charts: c, activeCell: 'A1' };
+    sheets.push(sheet);
+    return sheet;
+  }
+  function addSheet(opts) {
+    const s = addSheetRaw(opts);
+    activateSheet(s.id);
+    markDirty();   // persist the new tab in the session manifest soon
+    return s;
+  }
+
+  function activateSheet(id) {
+    if (id === activeSheetId) { renderTabs(); return; }
+    // The fx blur-commit must not fire mid-switch: focusing the new active
+    // cell happens before the bar is refreshed, and would otherwise commit
+    // the previous sheet's bar text into this one.
+    switchingSheet = true;
+    try {
+      const cur = activeSheet();
+      const oldAddrs = Object.keys(data);
+      if (cur) cur.activeCell = activeCell;
+      activeSheetId = id;
+      const s = activeSheet();
+      data = s.data; charts = s.charts;
+      activeCell = s.activeCell || 'A1';
+      editingCell = null;
+      $('calcFx').value = '';
+      // renderCell reads the live `data`; re-rendering the old sheet's addresses
+      // against the new binding is what clears their stale display.
+      oldAddrs.forEach(renderCell);
+      recalcAll(); renderAll(); renderCharts();
+      setActive(activeCell);
+      const key = 'calc:' + id;
+      if (!s.historyReady) {
+        History.reset(key);
+        History.registerCurrentSnapshot(key, captureCalcState, restoreCalcState);
+        s.historyReady = true;
+      }
+      renderTabs();
+    } finally {
+      switchingSheet = false;
+    }
+  }
+
+  function closeSheet(id) {
+    const i = sheets.findIndex(s => s.id === id);
+    if (i < 0) return;
+    const s = sheets[i];
+    const doClose = () => {
+      sheets.splice(i, 1);
+      if (activeSheetId === id) {
+        activeSheetId = null;
+        if (sheets.length) activateSheet(sheets[Math.max(0, i - 1)].id);
+        else addSheet();
+      } else {
+        renderTabs();
+      }
       markDirty();
-      setActive('A1');
     };
-    if (!hasContent) { reset(); return; }
-    UI.confirm({ title: 'New sheet?', message: 'Erase all cells and charts in this sheet. Unsaved changes will be lost.', okText: 'Discard & start new', danger: true })
-      .then(ok => { if (ok) reset(); });
+    if (sheetHasContent(s)) {
+      UI.confirm({ title: `Close ${s.name}?`, message: 'The sheet contents will be lost.', okText: 'Close anyway', danger: true })
+        .then(ok => { if (ok) doClose(); });
+    } else {
+      doClose();
+    }
+  }
+
+  function renderTabs() {
+    if (!tabs) return;
+    tabs.render(sheets.map(s => ({ id: s.id, name: s.name, dirty: sheetHasContent(s) })), activeSheetId);
   }
 
   // ---------- Import / Export ----------
@@ -955,26 +1034,35 @@ const Calc = (() => {
       const wb = XLSX.read(f.bytes, { type: 'array' });
       const ws = wb.Sheets[wb.SheetNames[0]];
       if (!ws) { UI.toast('No sheets in file', 'warn'); return; }
-      // Wipe current data
-      snapshot();
-      wipeData();
-      charts.length = 0;
+      // Parse into a fresh cell map first, then decide where it lands.
+      const imported = Object.create(null);
       const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
       for (let r = range.s.r; r <= Math.min(range.e.r, ROWS - 1); r++) {
         for (let c = range.s.c; c <= Math.min(range.e.c, COLS - 1); c++) {
           const addr = XLSX.utils.encode_cell({ r, c });
           const cell = ws[addr];
           if (cell == null) continue;
-          const key = keyOf(c, r);
           let raw;
           if (cell.f) raw = '=' + cell.f;
           else if (cell.t === 'n') raw = '' + cell.v;
           else if (cell.t === 'b') raw = cell.v ? 'TRUE' : 'FALSE';
           else raw = '' + (cell.w ?? cell.v ?? '');
-          data[key] = { raw };
+          imported[XLSX.utils.encode_cell({ r, c })] = { raw };
         }
       }
-      recalcAll(); renderAll(); markDirty();
+      const name = f.name.replace(/\.[^.]+$/, '');
+      const cur = activeSheet();
+      if (cur && !sheetHasContent(cur)) {
+        // Pristine active sheet: load in place (single undo step).
+        snapshot();
+        for (const k of Object.keys(imported)) data[k] = imported[k];
+        cur.name = name;
+        recalcAll(); renderAll(); markDirty(); renderTabs();
+      } else {
+        // Sheet has content: open the import in a new tab.
+        addSheet({ name, data: imported });
+        markDirty();
+      }
       UI.toast(`Imported ${f.name}`, 'success');
     } catch (e) {
       if (e.name !== 'AbortError') UI.toast('Import failed: ' + e.message, 'error');
@@ -1095,24 +1183,30 @@ const Calc = (() => {
     recalcAll(); renderAll(); renderCharts();
   }
   function snapshot() {
-    History.snapshot('calc', captureCalcState(), restoreCalcState);
+    History.snapshot(sheetKey(), captureCalcState(), restoreCalcState);
   }
-  function doUndo() { History.undo('calc'); }
-  function doRedo() { History.redo('calc'); }
+  function doUndo() { History.undo(sheetKey()); }
+  function doRedo() { History.redo(sheetKey()); }
 
   // ---------- Dirty + autosave ----------
   function markDirty() {
     dirty = true;
+    renderTabs();
     clearTimeout(autosaveTimer);
     autosaveTimer = setTimeout(autosaveNow, 800);
   }
   async function autosaveNow() {
     try {
-      // Save { addr: raw } plus charts. Wrapped for forward-compatibility; the
-      // restore path also accepts the old bare-map format.
-      const dump = {};
-      for (const k of Object.keys(data)) dump[k] = data[k].raw;
-      await Storage.save('calc:sheet', { cells: dump, charts });
+      // Save every open sheet: { addr: raw } cells plus charts per sheet.
+      const dumpSheets = sheets.map(s => {
+        const cells = {};
+        for (const k of Object.keys(s.data)) cells[k] = s.data[k].raw;
+        return {
+          id: s.id, name: s.name, cells, charts: s.charts,
+          activeCell: s.id === activeSheetId ? activeCell : s.activeCell,
+        };
+      });
+      await Storage.save('calc:sheets', { sheets: dumpSheets, active: activeSheetId });
       dirty = false;
     } catch (e) { /* ignore */ }
   }
@@ -1127,34 +1221,55 @@ const Calc = (() => {
     $('calcFx').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') { e.preventDefault(); commitFormulaBar(true); }
     });
-    $('calcFx').addEventListener('blur', () => commitFormulaBar(false));
+    $('calcFx').addEventListener('blur', () => { if (!switchingSheet) commitFormulaBar(false); });
 
-    // Register undo: how to capture + restore the current state.
-    History.registerCurrentSnapshot('calc', captureCalcState, restoreCalcState);
-    History.reset('calc');
+    // Register undo + tabs. Per-sheet history keys are initialized lazily by
+    // activateSheet(), which also binds the live data/charts to the sheet.
+    tabs = Tabs.create({
+      mount: $('calcTabs'),
+      onActivate: activateSheet,
+      onClose: closeSheet,
+      onNew: newSheet,
+      newTitle: 'New sheet',
+    });
 
-    // Restore
+    // Restore the last session's open sheets.
     try {
-      const saved = await Storage.load('calc:sheet');
-      if (saved && typeof saved === 'object') {
-        // Support both new { cells, charts } shape and legacy bare { addr: raw } map.
-        const cells = saved.cells || saved;
-        const savedCharts = saved.charts;
-        if (cells && typeof cells === 'object') {
-          for (const k of Object.keys(cells)) data[k] = { raw: cells[k] };
+      const saved = await Storage.load('calc:sheets');
+      if (saved && Array.isArray(saved.sheets) && saved.sheets.length) {
+        for (const s of saved.sheets) {
+          const d = Object.create(null);
+          const cells = s.cells || {};
+          for (const k of Object.keys(cells)) d[k] = { raw: cells[k] };
+          const ch = Array.isArray(s.charts) ? s.charts : [];
+          for (const c of ch) chartSeq = Math.max(chartSeq, parseInt((c.id || 'ch0').slice(2)) + 1);
+          sheets.push({
+            id: s.id || ('s' + (sheets.length + 1)),
+            name: s.name || 'Sheet', data: d, charts: ch,
+            activeCell: s.activeCell || 'A1',
+          });
         }
-        if (Array.isArray(savedCharts)) {
-          charts.length = 0;
-          for (const c of savedCharts) {
-            charts.push(c);
-            chartSeq = Math.max(chartSeq, parseInt((c.id || 'ch0').slice(2)) + 1);
-          }
+        sheetSeq = sheets.length + 1;
+        activateSheet(saved.active && sheets.some(s => s.id === saved.active) ? saved.active : sheets[0].id);
+      } else {
+        // Migrate the pre-tabs single-sheet autosave (v1.2.x).
+        const legacy = await Storage.load('calc:sheet');
+        if (legacy && typeof legacy === 'object' && (Object.keys(legacy.cells || legacy).length || (legacy.charts || []).length)) {
+          const cells = legacy.cells || legacy;
+          const d = Object.create(null);
+          for (const k of Object.keys(cells)) d[k] = { raw: cells[k] };
+          const ch = Array.isArray(legacy.charts) ? legacy.charts : [];
+          for (const c of ch) chartSeq = Math.max(chartSeq, parseInt((c.id || 'ch0').slice(2)) + 1);
+          sheets.push({ id: 's1', name: 'Sheet-1', data: d, charts: ch, activeCell: 'A1' });
+          sheetSeq = 2;
+          activateSheet('s1');
+        } else {
+          addSheet();
         }
-        recalcAll(); renderAll(); renderCharts();
       }
-    } catch (e) { /* ignore */ }
-
-    setActive('A1');
+    } catch (e) {
+      if (!sheets.length) addSheet();
+    }
   }
 
   function buildToolbar() {

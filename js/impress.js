@@ -7,7 +7,14 @@
 const Impress = (() => {
   // Each slide: { bg: '#ffffff', elements: [...] }
   // element: { id, kind:'text'|'rect'|'ellipse'|'image', x,y,w,h (in % of slide),
-  //            text?, fontSize?, color?, fill?, bold?, italic?, align?, dataUrl? }
+  //            text?, fontSize?, fontFamily?, color?, fill?, bold?, italic?, align?, dataUrl? }
+  // Multi-deck: each deck owns { id, name, slides, current }. The live
+  // `slides`/`current` bindings point at the active deck; unlike Calc, Impress
+  // REASSIGNS slides (newDeck, imports…), so decks are re-synced on switch.
+  const decks = [];
+  let activeDeckId = null;
+  let deckSeq = 1;
+  let tabs = null;
   let slides = [];
   let current = 0;
   let selected = null;
@@ -21,31 +28,55 @@ const Impress = (() => {
 
   const $ = (id) => document.getElementById(id);
 
+  function activeDeck() { return decks.find(d => d.id === activeDeckId); }
+  function deckKey() { return 'impress:' + activeDeckId; }
+  function isFreshSlides(ss) {
+    return ss.length === 1 &&
+      ss[0].elements && ss[0].elements.length === 1 &&
+      ss[0].elements[0].text === 'Click to edit title';
+  }
+
   function boot() {
     injectStyles();
     buildToolbar();
     buildLayout();
     wireCanvas();
-    // Undo registration: capture + restore current deck + cursor.
-    History.registerCurrentSnapshot('impress',
-      () => ({ slides: Util.deepClone(slides), current, selected }),
-      (s) => { slides = s.slides; current = s.current; selected = s.selected; renderSlideList(); renderCanvas(); });
-    History.reset('impress');
-    // Restore
-    Storage.load('impress:deck').then(saved => {
-      if (saved && Array.isArray(saved.slides) && saved.slides.length) {
-        slides = saved.slides;
-        current = 0;
-        renderSlideList();
-        renderCanvas();
+    // Restore the last session's open decks. Per-deck history keys are
+    // initialized lazily by activateDeck().
+    tabs = Tabs.create({
+      mount: $('impressTabs'),
+      onActivate: activateDeck,
+      onClose: closeDeck,
+      onNew: newPresentation,
+      newTitle: 'New presentation',
+    });
+    Storage.load('impress:decks').then(saved => {
+      if (saved && Array.isArray(saved.decks) && saved.decks.length) {
+        for (const d of saved.decks) {
+          decks.push({
+            id: d.id || ('d' + (decks.length + 1)),
+            name: d.name || 'Deck',
+            slides: (Array.isArray(d.slides) && d.slides.length) ? d.slides : freshDeckSlides(),
+            current: d.current || 0,
+          });
+        }
+        deckSeq = decks.length + 1;
+        activateDeck(saved.active && decks.some(d => d.id === saved.active) ? saved.active : decks[0].id);
       } else {
-        newDeck();
+        // Migrate the pre-tabs single-deck autosave (v1.2.x).
+        Storage.load('impress:deck').then(legacy => {
+          if (legacy && Array.isArray(legacy.slides) && legacy.slides.length) {
+            addDeck({ slides: legacy.slides });
+          } else {
+            addDeck();
+          }
+        }).catch(() => { if (!decks.length) addDeck(); });
       }
-    }).catch(() => newDeck());
+    }).catch(() => { if (!decks.length) addDeck(); });
   }
 
-  function newDeck() {
-    slides = [{
+  function freshDeckSlides() {
+    return [{
       bg: '#ffffff',
       elements: [{
         id: 'e' + (seq++),
@@ -55,6 +86,10 @@ const Impress = (() => {
         fontSize: 40, bold: true, color: '#1a3a6c', align: 'center',
       }],
     }];
+  }
+
+  function newDeck() {
+    slides = freshDeckSlides();
     current = 0;
     selected = null;
     renderSlideList();
@@ -62,35 +97,97 @@ const Impress = (() => {
     markDirty();
   }
 
-  // Start a fresh presentation (asks before discarding the current deck).
+  // Start a fresh presentation in a new tab (nothing is discarded).
   function newPresentation() {
-    const isFreshDeck = slides.length === 1 &&
-      slides[0].elements && slides[0].elements.length === 1 &&
-      slides[0].elements[0].text === 'Click to edit title';
-    const go = () => { snapshot(); newDeck(); };
-    if (isFreshDeck) { go(); return; }
-    UI.confirm({
-      title: 'New presentation?',
-      message: 'The current deck will be discarded. Unsaved slides will be lost.',
-      okText: 'Discard & start new', danger: true,
-    }).then(ok => { if (ok) go(); });
+    addDeck();
+  }
+
+  function addDeckRaw({ name = null, slides: sl = null } = {}) {
+    const n = deckSeq++;
+    const id = 'd' + n;
+    if (!name) name = 'Deck-' + n;
+    const deck = { id, name, slides: sl || freshDeckSlides(), current: 0 };
+    decks.push(deck);
+    return deck;
+  }
+  function addDeck(opts) {
+    const d = addDeckRaw(opts);
+    activateDeck(d.id);
+    markDirty();   // persist the new tab in the session manifest soon
+    return d;
+  }
+
+  function activateDeck(id) {
+    if (id === activeDeckId) { renderTabs(); return; }
+    const cur = activeDeck();
+    if (cur) { cur.slides = slides; cur.current = current; }
+    activeDeckId = id;
+    const d = activeDeck();
+    slides = d.slides; current = d.current || 0;
+    selected = null;
+    const key = 'impress:' + id;
+    if (!d.historyReady) {
+      History.reset(key);
+      History.registerCurrentSnapshot(key,
+        () => ({ slides: Util.deepClone(slides), current, selected }),
+        (s) => { slides = s.slides; current = s.current; selected = s.selected; renderSlideList(); renderCanvas(); });
+      d.historyReady = true;
+    }
+    renderSlideList();
+    renderCanvas();
+    renderTabs();
+  }
+
+  function closeDeck(id) {
+    const i = decks.findIndex(d => d.id === id);
+    if (i < 0) return;
+    const d = decks[i];
+    const live = d.id === activeDeckId ? slides : d.slides;
+    const doClose = () => {
+      decks.splice(i, 1);
+      if (activeDeckId === id) {
+        activeDeckId = null;
+        if (decks.length) activateDeck(decks[Math.max(0, i - 1)].id);
+        else addDeck();
+      } else {
+        renderTabs();
+      }
+      markDirty();
+    };
+    if (!isFreshSlides(live)) {
+      UI.confirm({ title: `Close ${d.name}?`, message: 'The deck contents will be lost.', okText: 'Close anyway', danger: true })
+        .then(ok => { if (ok) doClose(); });
+    } else {
+      doClose();
+    }
+  }
+
+  function renderTabs() {
+    if (!tabs) return;
+    tabs.render(decks.map(d => ({
+      id: d.id, name: d.name,
+      dirty: !isFreshSlides(d.id === activeDeckId ? slides : d.slides),
+    })), activeDeckId);
   }
 
   // ---------- Layout ----------
   function buildLayout() {
     const root = $('impressContent');
     root.innerHTML = `
-      <div class="impress-sidebar" id="impSidebar">
-        <div class="impress-sidehead">
-          <span>Slides</span>
-          <button class="tb-btn icon-only" id="impAddSlide" title="Add slide">＋</button>
+      <div id="impressTabs"></div>
+      <div class="impress-row">
+        <div class="impress-sidebar" id="impSidebar">
+          <div class="impress-sidehead">
+            <span>Slides</span>
+            <button class="tb-btn icon-only" id="impAddSlide" title="Add slide">＋</button>
+          </div>
+          <div class="impress-slidelist" id="impSlideList"></div>
         </div>
-        <div class="impress-slidelist" id="impSlideList"></div>
+        <div class="impress-stage" id="impStage">
+          <div class="impress-canvas" id="impCanvas" tabindex="0"></div>
+        </div>
+        <div class="impress-inspector" id="impInspector"></div>
       </div>
-      <div class="impress-stage" id="impStage">
-        <div class="impress-canvas" id="impCanvas" tabindex="0"></div>
-      </div>
-      <div class="impress-inspector" id="impInspector"></div>
     `;
     $('impAddSlide').onclick = addSlide;
     $('impSlideList').addEventListener('click', (e) => {
@@ -476,22 +573,29 @@ const Impress = (() => {
     }
   }
 
+  // Load an opened deck into the pristine active tab, or a new tab.
+  function openIntoDeck(name, sl) {
+    seq = 1;
+    sl.forEach(s => (s.elements || []).forEach(el => (el.id = 'e' + (seq++))));
+    const cur = activeDeck();
+    if (cur && isFreshSlides(slides)) {
+      slides = sl; current = 0; selected = null;
+      cur.slides = slides;
+      cur.name = name;
+      History.reset(deckKey());
+      renderSlideList(); renderCanvas(); markDirty();
+    } else {
+      addDeck({ name, slides: sl });
+    }
+  }
+
   async function openJson(f) {
     try {
       const text = await f.text();
       const data = JSON.parse(text);
       if (!data || !Array.isArray(data.slides)) throw new Error('Not a PocketOffice deck');
-      slides = data.slides;
-      current = 0;
-      selected = null;
-      // Renumber element ids so they don't collide
-      seq = 1;
-      slides.forEach(s => (s.elements || []).forEach(el => (el.id = 'e' + (seq++))));
-      renderSlideList();
-      renderCanvas();
-      markDirty();
-      History.reset('impress');
-      UI.toast(`Opened ${f.name} (${slides.length} slides)`, 'success');
+      openIntoDeck(f.name.replace(/\.[^.]+$/, ''), data.slides);
+      UI.toast(`Opened ${f.name} (${data.slides.length} slides)`, 'success');
     } catch (e) {
       UI.toast('Could not read deck: ' + (e.message || e), 'error');
     }
@@ -552,17 +656,9 @@ const Impress = (() => {
           }
         }
       }
-      slides = newSlides;
-      current = 0;
-      selected = null;
-      seq = 1;
-      slides.forEach(s => (s.elements || []).forEach(el => (el.id = 'e' + (seq++))));
-      renderSlideList();
-      renderCanvas();
-      markDirty();
-      History.reset('impress');
-      const skipped = slides.reduce((n, s) => n + (s.elements || []).filter(e => e._unsupported).length, 0);
-      UI.toast(`Imported ${slides.length} slide${slides.length === 1 ? '' : 's'}${skipped ? ` (${skipped} item${skipped===1?'':'s'} skipped)` : ''}`, 'success');
+      openIntoDeck(f.name.replace(/\.[^.]+$/, ''), newSlides);
+      const skipped = newSlides.reduce((n, s) => n + (s.elements || []).filter(e => e._unsupported).length, 0);
+      UI.toast(`Imported ${newSlides.length} slide${newSlides.length === 1 ? '' : 's'}${skipped ? ` (${skipped} item${skipped===1?'':'s'} skipped)` : ''}`, 'success');
     } catch (e) {
       UI.toast(`Could not read ${f.name}: ${e.message || e}`, 'error');
     }
@@ -981,20 +1077,29 @@ const Impress = (() => {
   // Snapshot the deck (deep copy) + cursor before a mutation. seq stays monotonic.
   function snapshot() {
     const snap = { slides: Util.deepClone(slides), current, selected };
-    History.snapshot('impress', snap, (s) => {
+    History.snapshot(deckKey(), snap, (s) => {
       slides = s.slides; current = s.current; selected = s.selected;
       renderSlideList(); renderCanvas();
     });
   }
-  function doUndo() { History.undo('impress'); }
-  function doRedo() { History.redo('impress'); }
+  function doUndo() { History.undo(deckKey()); }
+  function doRedo() { History.redo(deckKey()); }
 
   // ---------- Dirty + autosave ----------
   function markDirty() {
     dirty = true;
+    renderTabs();
     clearTimeout(autosaveTimer);
     autosaveTimer = setTimeout(async () => {
-      try { await Storage.save('impress:deck', { slides }); dirty = false; } catch (e) { /* ignore */ }
+      try {
+        const dumpDecks = decks.map(d => ({
+          id: d.id, name: d.name,
+          slides: d.id === activeDeckId ? slides : d.slides,
+          current: d.id === activeDeckId ? current : d.current,
+        }));
+        await Storage.save('impress:decks', { decks: dumpDecks, active: activeDeckId });
+        dirty = false;
+      } catch (e) { /* ignore */ }
     }, 800);
   }
 
@@ -1004,7 +1109,8 @@ const Impress = (() => {
     const s = document.createElement('style');
     s.id = 'impress-styles';
     s.textContent = `
-      .impress-wrap { display: flex; flex: 1; min-height: 0; }
+      .impress-wrap { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+      .impress-row { display: flex; flex: 1; min-height: 0; }
       .impress-sidebar {
         width: 180px; flex-shrink: 0;
         background: var(--surface-2);
