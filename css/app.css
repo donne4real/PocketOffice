@@ -493,3 +493,7 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: var(-
   }
   .md-preview pre, .md-preview code { color: #000 !important; }
 }
+
+/* Tab drag-to-reorder states (shared Tabs strip) */
+.te-tab.dragging { opacity: .45; }
+.te-tab.drag-over { border-color: var(--accent); box-shadow: inset 0 2px 0 var(--accent); }

@@ -10,6 +10,7 @@ const Writer = (() => {
   const docs = [];
   let activeId = null;
   let docSeq = 1;
+  const closedDocs = [];       // recently closed, for Ctrl+Shift+T reopen
   let autosaveTimer = null;
   let tabs = null;            // shared tab strip (see Tabs in storage.js)
 
@@ -372,6 +373,10 @@ const Writer = (() => {
     if (i < 0) return;
     const d = docs[i];
     const doClose = () => {
+      // Park the closed doc for Ctrl+Shift+T reopen (content snapshot first).
+      d.html = d.id === activeId ? editor.innerHTML : d.html;
+      closedDocs.unshift({ id: d.id, name: d.name, handle: d.handle, dirty: d.dirty, html: d.html });
+      if (closedDocs.length > 10) closedDocs.length = 10;
       docs.splice(i, 1);
       if (activeId === id) {
         activeId = null;
@@ -390,9 +395,30 @@ const Writer = (() => {
     }
   }
 
+  // Reopen the most recently closed document (Ctrl+Shift+T).
+  function reopenDoc() {
+    if (!closedDocs.length) { UI.toast('No recently closed documents', 'info'); return; }
+    const d = closedDocs.shift();
+    docs.push({ id: d.id, name: d.name, handle: d.handle, dirty: d.dirty, html: d.html });
+    activateDoc(d.id);
+    autosaveSoon();
+    UI.toast(`Reopened ${d.name}`, 'success');
+  }
+
   function renderTabs() {
     if (!tabs) return;
     tabs.render(docs.map(d => ({ id: d.id, name: d.name, dirty: d.dirty })), activeId);
+  }
+
+  // Drag-to-reorder callback from the shared tab strip.
+  function reorderDocs(fromId, toId) {
+    const from = docs.findIndex(d => d.id === fromId);
+    const to = docs.findIndex(d => d.id === toId);
+    if (from < 0 || to < 0 || from === to) return;
+    const [moved] = docs.splice(from, 1);
+    docs.splice(to, 0, moved);
+    renderTabs();
+    autosaveSoon();
   }
 
   // Load opened file content into the pristine active tab, or a new tab.
@@ -557,6 +583,7 @@ const Writer = (() => {
   async function exportPdf(base) {
     const { jsPDF } = window.jspdf;
     const pdf = new jsPDF({ unit: 'pt', format: 'a4' });
+    PdfFonts.register(pdf);   // bundled families become usable below
     const pageW = pdf.internal.pageSize.getWidth();
     const pageH = pdf.internal.pageSize.getHeight();
     const margin = 56; // ~0.78in
@@ -567,9 +594,8 @@ const Writer = (() => {
     const blocks = [...editor.children];
     const addLine = (text, opts) => {
       const size = opts.size || 12;
-      const style = opts.style || 'normal';
-      const font = opts.font || 'helvetica';
-      pdf.setFont(font, style);
+      const { family, style } = PdfFonts.pick(opts.family || null, !!opts.bold, !!opts.italic);
+      pdf.setFont(family, style);
       pdf.setFontSize(size);
       const color = opts.color || [20, 20, 20];
       pdf.setTextColor(color[0], color[1], color[2]);
@@ -580,6 +606,17 @@ const Writer = (() => {
         y += size * 1.35;
       }
     };
+    // First family name of a computed CSS font list, e.g. "Inter", "Calibri".
+    const firstFontFamily = (cs) => (cs.fontFamily || '').split(',')[0].replace(/["']/g, '').trim() || null;
+    // Per-block font facts from the rendered document.
+    const fontFacts = (el) => {
+      const cs = getComputedStyle(el);
+      return {
+        family: firstFontFamily(cs),
+        bold: parseInt(cs.fontWeight, 10) >= 600,
+        italic: cs.fontStyle === 'italic',
+      };
+    };
 
     if (!blocks.length) {
       // fall back to innerText
@@ -587,29 +624,30 @@ const Writer = (() => {
     } else {
       for (const el of blocks) {
         const tag = el.tagName.toLowerCase();
+        const ff = fontFacts(el);
         if (/^h[1-6]$/.test(tag)) {
           const sz = { h1: 22, h2: 18, h3: 16, h4: 14, h5: 13, h6: 12 }[tag];
-          addLine(el.textContent, { size: sz, style: 'bold', color: [10, 10, 10] });
+          addLine(el.textContent, { size: sz, bold: true, color: [10, 10, 10], family: ff.family });
           y += 4;
         } else if (tag === 'ul' || tag === 'ol') {
           [...el.children].forEach((li, i) => {
-            addLine((tag === 'ol' ? (i + 1) + '. ' : '•  ') + li.textContent, { size: 12 });
+            addLine((tag === 'ol' ? (i + 1) + '. ' : '•  ') + li.textContent, { size: 12, family: ff.family });
           });
           y += 3;
         } else if (tag === 'blockquote') {
-          addLine('"' + el.textContent + '"', { size: 12, style: 'italic', color: [90, 90, 90] });
+          addLine('"' + el.textContent + '"', { size: 12, italic: true, color: [90, 90, 90], family: ff.family });
         } else if (tag === 'pre') {
-          el.textContent.split('\n').forEach(l => addLine(l, { size: 10, font: 'courier' }));
+          el.textContent.split('\n').forEach(l => addLine(l, { size: 10, family: 'JetBrains Mono' }));
         } else if (tag === 'table') {
           // Render table rows as text grid (best-effort)
           [...el.querySelectorAll('tr')].forEach(tr => {
             const cells = [...tr.querySelectorAll('td,th')].map(td => td.textContent);
-            addLine(cells.join('   |   '), { size: 10 });
+            addLine(cells.join('   |   '), { size: 10, family: ff.family });
           });
         } else {
           // p, div, etc. — strip HTML tags from innerHTML to preserve inline spacing
           const text = htmlToPlain(el);
-          addLine(text || '', { size: 12 });
+          addLine(text || '', { size: 12, family: ff.family, bold: ff.bold, italic: ff.italic });
         }
         y += 4;
       }
@@ -786,6 +824,7 @@ const Writer = (() => {
       onActivate: activateDoc,
       onClose: closeDoc,
       onNew: newDoc,
+      onReorder: reorderDocs,
       newTitle: 'New document',
     });
 
@@ -879,5 +918,5 @@ const Writer = (() => {
     setTimeout(() => editor && editor.focus(), 0);
   }
 
-  return { boot, onActivate };
+  return { boot, onActivate, undo: doUndo, redo: doRedo, reopen: reopenDoc };
 })();

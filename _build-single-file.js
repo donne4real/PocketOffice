@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const ROOT = __dirname;
-const VERSION = 'v1.3.0';
+const VERSION = 'v1.4.0';
 const srcHtml = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
 function inlineCss(html) {
   return html.replace(/<link[^>]*href="([^"]+\.css)"[^>]*>/g, (m, href) => {

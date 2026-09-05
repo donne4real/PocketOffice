@@ -14,6 +14,7 @@ const Impress = (() => {
   const decks = [];
   let activeDeckId = null;
   let deckSeq = 1;
+  const closedDecks = [];      // recently closed, for Ctrl+Shift+T reopen
   let tabs = null;
   let slides = [];
   let current = 0;
@@ -48,6 +49,7 @@ const Impress = (() => {
       onActivate: activateDeck,
       onClose: closeDeck,
       onNew: newPresentation,
+      onReorder: reorderDecks,
       newTitle: 'New presentation',
     });
     Storage.load('impress:decks').then(saved => {
@@ -144,6 +146,10 @@ const Impress = (() => {
     const d = decks[i];
     const live = d.id === activeDeckId ? slides : d.slides;
     const doClose = () => {
+      // Park the closed deck for Ctrl+Shift+T reopen (live slides win: the
+      // deck object's stored ref can be stale after in-place mutations).
+      closedDecks.unshift({ id: d.id, name: d.name, slides: live, current: d.id === activeDeckId ? current : d.current });
+      if (closedDecks.length > 10) closedDecks.length = 10;
       decks.splice(i, 1);
       if (activeDeckId === id) {
         activeDeckId = null;
@@ -162,12 +168,33 @@ const Impress = (() => {
     }
   }
 
+  // Reopen the most recently closed deck (Ctrl+Shift+T).
+  function reopenDeck() {
+    if (!closedDecks.length) { UI.toast('No recently closed decks', 'info'); return; }
+    const d = closedDecks.shift();
+    decks.push({ id: d.id, name: d.name, slides: d.slides, current: d.current });
+    activateDeck(d.id);
+    markDirty();
+    UI.toast(`Reopened ${d.name}`, 'success');
+  }
+
   function renderTabs() {
     if (!tabs) return;
     tabs.render(decks.map(d => ({
       id: d.id, name: d.name,
       dirty: !isFreshSlides(d.id === activeDeckId ? slides : d.slides),
     })), activeDeckId);
+  }
+
+  // Drag-to-reorder callback from the shared tab strip.
+  function reorderDecks(fromId, toId) {
+    const from = decks.findIndex(d => d.id === fromId);
+    const to = decks.findIndex(d => d.id === toId);
+    if (from < 0 || to < 0 || from === to) return;
+    const [moved] = decks.splice(from, 1);
+    decks.splice(to, 0, moved);
+    renderTabs();
+    markDirty();
   }
 
   // ---------- Layout ----------
@@ -1025,6 +1052,7 @@ const Impress = (() => {
     try {
       const { jsPDF } = window.jspdf;
       const pdf = new jsPDF({ orientation: 'landscape', unit: 'pt', format: [SLIDE_W, SLIDE_H] });
+      PdfFonts.register(pdf);   // bundled families become usable below
       slides.forEach((s, idx) => {
         if (idx > 0) pdf.addPage([SLIDE_W, SLIDE_H], 'landscape');
         // background
@@ -1034,7 +1062,8 @@ const Impress = (() => {
           const x = el.x/100*SLIDE_W, y = el.y/100*SLIDE_H, w = el.w/100*SLIDE_W, h = el.h/100*SLIDE_H;
           if (el.kind === 'text') {
             pdf.setFontSize(el.fontSize || 18);
-            pdf.setFont('helvetica', (el.bold?'bold':'') + (el.italic?'italic':'') || 'normal');
+            const { family, style } = PdfFonts.pick(el.fontFamily || null, !!el.bold, !!el.italic);
+            pdf.setFont(family, style);
             pdf.setTextColor(...hexToRgb(el.color || '#000000'));
             const lines = pdf.splitTextToSize(el.text || '', w);
             // vertical centering-ish
@@ -1227,5 +1256,5 @@ const Impress = (() => {
     setTimeout(() => $('impCanvas') && $('impCanvas').focus(), 0);
   }
 
-  return { boot, onActivate };
+  return { boot, onActivate, undo: doUndo, redo: doRedo, reopen: reopenDeck };
 })();

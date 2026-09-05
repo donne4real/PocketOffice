@@ -69,23 +69,21 @@
   }
 
   // ---- Global keyboard shortcuts ----
-  // Map app name -> History stack key (Text Editor is special: per-buffer).
-  function undoKeyFor(app) {
-    if (app === 'text') {
-      // TextEditor exposes undo/redo that already know the active buffer key.
-      return null;
-    }
-    return app;   // 'writer', 'calc', 'impress', 'pdf' match the stack keys
+  // Route undo/redo through each tool's own API: since v1.3.0 the History
+  // keys are per-document ('writer:w2', …), so only the tool knows its
+  // active key. Text Editor is the same (per-buffer keys).
+  function toolFor(app) {
+    return { writer: Writer, calc: Calc, impress: Impress, text: TextEditor, markdown: MarkdownReader }[app];
   }
   function doUndoRedo(which) {
-    if (currentApp === 'text') {
-      if (which === 'undo' && TextEditor.undo) return TextEditor.undo();
-      if (which === 'redo' && TextEditor.redo) return TextEditor.redo();
-    }
-    const key = undoKeyFor(currentApp);
-    if (!key) return;
-    if (which === 'undo') History.undo(key);
-    else History.redo(key);
+    const tool = toolFor(currentApp);
+    if (!tool) return;
+    if (which === 'undo' && typeof tool.undo === 'function') return tool.undo();
+    if (which === 'redo' && typeof tool.redo === 'function') return tool.redo();
+  }
+  function doReopen() {
+    const tool = toolFor(currentApp);
+    if (tool && typeof tool.reopen === 'function') tool.reopen();
   }
 
   function wireShortcuts() {
@@ -99,18 +97,21 @@
         e.preventDefault();
         setApp(apps[+e.key - 1]);
       }
-      // Ctrl/Cmd+Shift+T toggles theme
+      // Ctrl/Cmd+Shift+T reopens the last closed tab (browser convention)
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 't') {
-        e.preventDefault(); toggleTheme();
+        e.preventDefault(); doReopen(); return;
+      }
+      // Ctrl/Cmd+Shift+D toggles theme
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'd') {
+        e.preventDefault(); toggleTheme(); return;
       }
       // Ctrl+Z / Ctrl+Y (or Ctrl+Shift+Z) undo/redo — only in the active tool,
       // and only when the focus is in the document area (not a toolbar input).
       if ((e.ctrlKey || e.metaKey) && !e.altKey) {
         const k = e.key.toLowerCase();
         if (k === 'z' && !e.shiftKey) {
-          // Don't hijack native undo in contentEditable (Writer) — it has its own
-          // JS history now, so we DO want to intercept. But avoid stealing it from
-          // text inputs that the tool manages internally (formula bar, etc.).
+          // Avoid stealing native undo from toolbar inputs the tools manage
+          // internally (formula bar, find bar, …).
           if (tag === 'input' || tag === 'select') return;
           e.preventDefault(); doUndoRedo('undo');
         } else if (k === 'y' || (k === 'z' && e.shiftKey)) {

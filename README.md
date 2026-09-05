@@ -72,10 +72,11 @@ Editing *existing* text baked into a PDF (rewriting words already in the file)
 isn't supported — even LibreOffice struggles with that. You can add text,
 signatures, images, and restructure pages freely.
 
-**PDF export** (Writer and Impress) draws text with jsPDF's built-in standard
-fonts (Helvetica) — custom fonts are preserved in `.docx` / `.pptx` exports and
-in printed output, but not in generated PDFs. System fonts in `.docx`/`.pptx`
-also depend on the recipient's PC having them installed.
+**PDF export** embeds the three bundled font families (Inter, Lora, JetBrains
+Mono — regular/bold/italic, latin subset) into generated PDFs, so those
+documents look right on any machine. System fonts (Calibri, Cambria, …) still
+export as jsPDF's built-in Helvetica, and they depend on the recipient's PC
+having them installed in `.docx`/`.pptx` exports.
 
 ## Quick start
 
@@ -98,11 +99,15 @@ Just open **[donne4real.github.io/PocketOffice](https://donne4real.github.io/Poc
 |----------|--------|
 | `Alt+1`…`Alt+6` | Switch between the six tools |
 | `Ctrl+S` | Save current document (Writer, Text Editor, Markdown) |
-| `Ctrl+Shift+T` | Toggle dark mode |
+| `Ctrl+Shift+T` | Reopen the last closed tab (Writer, Calc, Impress, Text Editor) |
+| `Ctrl+Shift+D` | Toggle dark mode |
 | `Ctrl+B` / `I` / `U` | Bold / italic / underline (Writer) |
+| `Ctrl+Z` / `Ctrl+Y` | Undo / redo in the active tool |
 | `F2` | Edit current cell (Calc) |
 | `Enter` / `Tab` / `Arrows` | Navigate cells (Calc) |
 | `Arrows` / `Space` / `Esc` | Navigate / exit present mode (Impress) |
+
+Tabs in every document tool can be **dragged to reorder**.
 
 ## Architecture
 

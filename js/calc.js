@@ -14,6 +14,7 @@ const Calc = (() => {
   const sheets = [];
   let activeSheetId = null;
   let sheetSeq = 1;
+  const closedSheets = [];     // recently closed, for Ctrl+Shift+T reopen
   let tabs = null;
   // cell key = "A1" etc.  data[key] = { raw: string typed, value: computed }
   let data = Object.create(null);
@@ -1000,6 +1001,10 @@ const Calc = (() => {
     if (i < 0) return;
     const s = sheets[i];
     const doClose = () => {
+      // Park the closed sheet for Ctrl+Shift+T reopen. For the active sheet
+      // the live bindings ARE its data (shared references), so snapshot as-is.
+      closedSheets.unshift({ id: s.id, name: s.name, data: s.data, charts: s.charts, activeCell: s.activeCell });
+      if (closedSheets.length > 10) closedSheets.length = 10;
       sheets.splice(i, 1);
       if (activeSheetId === id) {
         activeSheetId = null;
@@ -1018,9 +1023,30 @@ const Calc = (() => {
     }
   }
 
+  // Reopen the most recently closed sheet (Ctrl+Shift+T).
+  function reopenSheet() {
+    if (!closedSheets.length) { UI.toast('No recently closed sheets', 'info'); return; }
+    const s = closedSheets.shift();
+    sheets.push({ id: s.id, name: s.name, data: s.data, charts: s.charts, activeCell: s.activeCell });
+    activateSheet(s.id);
+    markDirty();
+    UI.toast(`Reopened ${s.name}`, 'success');
+  }
+
   function renderTabs() {
     if (!tabs) return;
     tabs.render(sheets.map(s => ({ id: s.id, name: s.name, dirty: sheetHasContent(s) })), activeSheetId);
+  }
+
+  // Drag-to-reorder callback from the shared tab strip.
+  function reorderSheets(fromId, toId) {
+    const from = sheets.findIndex(s => s.id === fromId);
+    const to = sheets.findIndex(s => s.id === toId);
+    if (from < 0 || to < 0 || from === to) return;
+    const [moved] = sheets.splice(from, 1);
+    sheets.splice(to, 0, moved);
+    renderTabs();
+    markDirty();
   }
 
   // ---------- Import / Export ----------
@@ -1230,6 +1256,7 @@ const Calc = (() => {
       onActivate: activateSheet,
       onClose: closeSheet,
       onNew: newSheet,
+      onReorder: reorderSheets,
       newTitle: 'New sheet',
     });
 
@@ -1438,5 +1465,5 @@ const Calc = (() => {
     }, 0);
   }
 
-  return { boot, onActivate };
+  return { boot, onActivate, undo: doUndo, redo: doRedo, reopen: reopenSheet };
 })();

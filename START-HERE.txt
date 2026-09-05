@@ -1,5 +1,5 @@
 ============================================================
-  PocketOffice v1.3.0 — how to run it on a restricted PC
+  PocketOffice v1.4.0 — how to run it on a restricted PC
 ============================================================
 
 WHAT IT IS
@@ -55,12 +55,14 @@ STEP 3 — Use it
     each have a tab strip under the toolbar. ＋ New (toolbar or
     tab strip) opens a fresh document in a new tab; the ✕ on a
     tab closes it (asking first if there is unsaved work).
-    Tabs are restored the next time you open PocketOffice.
+    Tabs can be DRAGGED to reorder. Ctrl+Shift+T reopens the
+    last closed tab. Tabs are restored the next time you open
+    PocketOffice.
 
   * FONTS: Writer and Impress offer 18 system fonts plus
     Inter, Lora and JetBrains Mono — these three are bundled
     in the folder (lib/fonts), so they look the same on any
-    PC, even offline.
+    PC, even offline. PDF exports embed these three families.
 
   * Open and save real files with the toolbar buttons
     (Open… / Save / Save As…). Files go wherever you pick.
@@ -69,6 +71,8 @@ STEP 3 — Use it
     tab by accident loses nothing.
 
   * Keyboard:  Alt+1..6 switches tools.
+               Ctrl+Shift+T reopens a closed tab.
+               Ctrl+Shift+D toggles dark mode.
                Ctrl+S saves the current document.
 
 ------------------------------------------------------------

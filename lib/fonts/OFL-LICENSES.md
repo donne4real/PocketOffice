@@ -10,6 +10,12 @@ loaded offline via `css/fonts.css` — no network requests at runtime.
 | Lora | variable 400–700 + italic | `lora-var.woff2`, `lora-var-italic.woff2` | SIL OFL 1.1 | Cyreal (Olga Karpushina, Lilla Sallai) |
 | JetBrains Mono | variable 100–800 | `jetbrains-mono-var.woff2` | SIL OFL 1.1 | JetBrains |
 
+`ttf/` holds latin-subset static instances (400/700/italic, generated from
+Google Fonts static builds, subset with fonttools — see
+`_gen-embedded-fonts.js`). They are base64-embedded into
+`lib/embedded-fonts.js` so PDF export (jsPDF) can use the bundled fonts
+offline. Same families, same license.
+
 Files are the latin-subset variable WOFF2 builds distributed by
 [Fontsource](https://fontsource.org/) (MIT-licensed packaging).
 

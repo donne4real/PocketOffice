@@ -7,6 +7,8 @@ const TextEditor = (() => {
   const buffers = [];
   let activeId = null;
   let seq = 1;
+  const closedBuffers = [];    // recently closed, for Ctrl+Shift+T reopen
+  let tabs = null;             // shared tab strip (see Tabs in storage.js)
 
   const $ = (id) => document.getElementById(id);
   const els = {
@@ -53,6 +55,11 @@ const TextEditor = (() => {
     if (i < 0) return;
     const b = buffers[i];
     const doClose = async () => {
+      // Park the closed buffer for Ctrl+Shift+T reopen. Text is current:
+      // inactive buffers hold theirs; the active one syncs just below.
+      if (b.id === activeId) captureActive();
+      closedBuffers.unshift(b);
+      if (closedBuffers.length > 10) closedBuffers.length = 10;
       buffers.splice(i, 1);
       Storage.remove('text:' + b.name);
       History.reset('text:' + b.id);
@@ -74,6 +81,18 @@ const TextEditor = (() => {
     }
   }
 
+  // Reopen the most recently closed buffer (Ctrl+Shift+T).
+  function reopenBuffer() {
+    if (!closedBuffers.length) { UI.toast('No recently closed tabs', 'info'); return; }
+    const b = closedBuffers.shift();
+    buffers.push(b);
+    activeId = b.id;
+    renderTabs();
+    loadIntoEditor();
+    autosaveSoon();
+    UI.toast(`Reopened ${b.name}`, 'success');
+  }
+
   function captureActive() {
     const b = active();
     if (b) { b.text = els.textarea().value; }
@@ -90,30 +109,19 @@ const TextEditor = (() => {
   }
 
   function renderTabs() {
-    const tabs = els.tabs();
-    // preserve the "New" button if present
-    let newBtn = tabs.querySelector('.te-new');
-    tabs.innerHTML = '';
-    for (const b of buffers) {
-      const t = document.createElement('div');
-      t.className = 'te-tab' + (b.id === activeId ? ' active' : '') + (b.dirty ? ' dirty' : '');
-      t.dataset.id = b.id;
-      t.innerHTML = `<span class="name"></span><span class="close" title="Close">✕</span>`;
-      t.querySelector('.name').textContent = b.name;
-      t.addEventListener('mousedown', (e) => {
-        if (e.target.classList.contains('close')) { e.stopPropagation(); closeBuffer(b.id); }
-        else activate(b.id);
-      });
-      tabs.appendChild(t);
-    }
-    if (newBtn) tabs.appendChild(newBtn);
-    else {
-      newBtn = document.createElement('button');
-      newBtn.className = 'te-new';
-      newBtn.textContent = '＋ New';
-      newBtn.onclick = () => newBuffer();
-      tabs.appendChild(newBtn);
-    }
+    if (!tabs) return;
+    tabs.render(buffers.map(b => ({ id: b.id, name: b.name, dirty: b.dirty })), activeId);
+  }
+
+  // Drag-to-reorder callback from the shared tab strip.
+  function reorderBuffers(fromId, toId) {
+    const from = buffers.findIndex(b => b.id === fromId);
+    const to = buffers.findIndex(b => b.id === toId);
+    if (from < 0 || to < 0 || from === to) return;
+    const [moved] = buffers.splice(from, 1);
+    buffers.splice(to, 0, moved);
+    renderTabs();
+    autosaveSoon();
   }
 
   // ----- Undo (per-buffer, debounced on input) -----
@@ -271,6 +279,19 @@ const TextEditor = (() => {
 
   // ----- Boot: restore from IndexedDB or start fresh -----
   async function boot() {
+    // Swap the static #teTabs div for the shared Tabs strip (same classes,
+    // plus drag-to-reorder) mounted in the same spot.
+    const oldStrip = els.tabs();
+    const mount = oldStrip.parentElement;
+    oldStrip.remove();
+    tabs = Tabs.create({
+      mount,
+      onActivate: activate,
+      onClose: closeBuffer,
+      onNew: () => newBuffer(),
+      onReorder: reorderBuffers,
+      newTitle: 'New text file',
+    });
     wireEvents();
     try {
       const items = await Storage.list('text:');
@@ -356,5 +377,5 @@ const TextEditor = (() => {
     setTimeout(() => els.textarea().focus(), 0);
   }
 
-  return { boot, newBuffer, onActivate, undo: teUndo, redo: teRedo };
+  return { boot, newBuffer, onActivate, undo: teUndo, redo: teRedo, reopen: reopenBuffer };
 })();
