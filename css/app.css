@@ -441,6 +441,309 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: var(-
 .small { font-size: 12px; }
 
 /* ==========================================================================
+   Writer (moved here from js/word.js in v2.0.0)
+   ========================================================================== */
+.writer-surface {
+  flex: 1; overflow: auto;
+  background: var(--bg);
+  padding: 0;
+}
+.writer-doc {
+  background: var(--surface);
+  max-width: 8.5in;
+  min-height: 11in;
+  margin: 24px auto;
+  padding: 1in 1in;
+  box-shadow: var(--shadow);
+  border-radius: 2px;
+  font-family: var(--font-doc);
+  font-size: 16px;
+  line-height: 1.5;
+  color: #1a1a1a;
+  outline: none;
+}
+.writer-doc:focus { outline: none; }
+.writer-doc p { margin: 0 0 12px; }
+.writer-doc h1 { font-size: 2em; margin: .67em 0; }
+.writer-doc h2 { font-size: 1.5em; margin: .75em 0; }
+.writer-doc h3 { font-size: 1.17em; margin: .83em 0; }
+.writer-doc h4 { font-size: 1em; margin: 1.12em 0; }
+.writer-doc ul, .writer-doc ol { margin: 0 0 12px; padding-left: 32px; }
+.writer-doc blockquote {
+  border-left: 3px solid #ccc; padding-left: 12px; color: #555; margin: 0 0 12px;
+}
+.writer-doc pre {
+  background: #f4f4f4; padding: 10px; border-radius: 4px;
+  font-family: var(--font-mono); font-size: 13px; white-space: pre-wrap;
+}
+.writer-doc a { color: var(--accent); }
+.writer-doc img { max-width: 100%; }
+body.theme-dark .writer-doc { color: #222; background: #fdfdfd; }
+
+/* ==========================================================================
+   Calc (moved here from js/calc.js in v2.0.0)
+   ========================================================================== */
+.calc-wrap { display: flex; flex-direction: column; flex: 1; min-height: 0; position: relative; }
+.calc-content {
+  flex: 1; min-height: 0; overflow: auto;
+  position: relative;
+  background: var(--surface);
+  font-family: var(--font-ui);
+  font-size: 13px;
+}
+.calc-corner {
+  position: sticky; top: 0; left: 0; z-index: 5;
+  width: 44px; height: 26px;
+  background: var(--surface-2); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);
+  display: grid; place-items: center; color: var(--text-faint);
+}
+.calc-colheader {
+  position: sticky; top: 0; z-index: 4;
+  display: flex; align-items: center;
+  height: 26px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+.calc-colheader .calc-spacer { width: 44px; flex-shrink: 0; border-right: 1px solid var(--border); height: 100%; }
+.calc-colhead {
+  width: 92px; flex-shrink: 0;
+  text-align: center; line-height: 26px;
+  color: var(--text-dim); font-weight: 500;
+  border-right: 1px solid var(--border-soft);
+}
+.calc-body { display: grid; grid-template-columns: 44px repeat(var(--calc-cols, 100), 92px); align-content: start; }
+.calc-rowhead {
+  position: sticky; left: 0; z-index: 3;
+  background: var(--surface-2);
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border-soft);
+  text-align: center; line-height: 26px;
+  color: var(--text-dim); font-size: 12px;
+  height: 26px;
+}
+.calc-cell {
+  height: 26px; padding: 0 6px;
+  border-right: 1px solid var(--border-soft);
+  border-bottom: 1px solid var(--border-soft);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  line-height: 26px;
+  outline: none;
+  cursor: cell;
+  user-select: none;
+}
+.calc-cell.calc-num { text-align: right; color: #111; }
+body.theme-dark .calc-cell.calc-num { color: var(--text); }
+.calc-cell.calc-bool { text-align: center; color: var(--text-dim); font-style: italic; }
+.calc-cell.calc-err { color: var(--danger); text-align: center; font-weight: 600; }
+.calc-cell.calc-str { color: var(--text); }
+.calc-cell.active { outline: 2px solid var(--accent); outline-offset: -2px; }
+.calc-cell.editing { padding: 0; }
+.calc-edit {
+  width: 100%; height: 26px;
+  border: 0; outline: 2px solid var(--accent); outline-offset: -2px;
+  padding: 0 6px;
+  background: var(--surface); color: var(--text);
+  font: inherit;
+}
+/* Charts — floating overlay panels */
+.calc-chart-layer {
+  position: absolute; inset: 0;
+  pointer-events: none;   /* let clicks pass to grid except on panels themselves */
+  z-index: 6;
+}
+.calc-chart-panel {
+  position: absolute;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  display: flex; flex-direction: column;
+  pointer-events: auto;
+  overflow: hidden;
+  min-width: 160px; min-height: 100px;
+}
+.calc-chart-head {
+  display: flex; align-items: center; gap: 2px;
+  padding: 4px 6px 4px 10px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border-soft);
+  cursor: move;
+  font-size: 12px; font-weight: 600; color: var(--text-dim);
+}
+.calc-chart-head .tb-btn.icon-only { width: 24px; height: 24px; font-size: 12px; }
+.calc-chart-panel canvas { flex: 1; min-height: 0; padding: 6px; box-sizing: border-box; }
+.calc-chart-resize {
+  position: absolute; right: 0; bottom: 0;
+  width: 14px; height: 14px;
+  cursor: nwse-resize;
+  background: linear-gradient(135deg, transparent 50%, var(--border) 50%);
+}
+
+/* ==========================================================================
+   Impress (moved here from js/impress.js in v2.0.0)
+   ========================================================================== */
+.impress-wrap { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.impress-row { display: flex; flex: 1; min-height: 0; }
+.impress-sidebar {
+  width: 180px; flex-shrink: 0;
+  background: var(--surface-2);
+  border-right: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.impress-sidehead {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 10px;
+  font-size: 12px; font-weight: 600; color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+  text-transform: uppercase; letter-spacing: .5px;
+}
+.impress-slidelist { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 8px; }
+.impress-slideitem {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+  padding: 4px; cursor: pointer; transition: border-color .12s;
+}
+.impress-slideitem:hover { border-color: var(--accent); }
+.impress-slideitem.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.impress-thumb {
+  width: 100%; aspect-ratio: 16/9;
+  background: #fff; border: 1px solid var(--border-soft); border-radius: 3px;
+  position: relative; overflow: hidden;
+}
+.impress-slidemeta {
+  display: flex; align-items: center; gap: 2px; margin-top: 4px; font-size: 11px;
+}
+.impress-slidemeta .num { font-weight: 600; color: var(--text-dim); padding: 0 4px; }
+.impress-slidemeta button {
+  background: transparent; border: 0; color: var(--text-faint); cursor: pointer;
+  font-size: 11px; padding: 2px 3px; border-radius: 3px;
+}
+.impress-slidemeta button:hover { background: var(--surface-3); color: var(--text); }
+.impress-slidemeta .del:hover { color: var(--danger); }
+
+.impress-stage {
+  flex: 1; min-width: 0; padding: 24px;
+  display: grid; place-items: center;
+  background: var(--bg);
+  overflow: auto;
+}
+.impress-canvas {
+  width: min(960px, 100%); aspect-ratio: 16/9;
+  background: #fff; box-shadow: var(--shadow);
+  border-radius: 3px; position: relative;
+  outline: none;
+}
+.imp-el {
+  position: absolute; cursor: move; user-select: none;
+  box-sizing: border-box;
+}
+.imp-el.selected { outline: 2px solid var(--accent); outline-offset: 1px; }
+.imp-text { padding: 4px 6px; }
+.imp-shape { border: 1px solid rgba(0,0,0,.06); }
+.imp-resize {
+  position: absolute; right: -6px; bottom: -6px;
+  width: 12px; height: 12px;
+  background: var(--accent); border: 2px solid #fff; border-radius: 50%;
+  cursor: nwse-resize;
+}
+
+.impress-inspector {
+  width: 220px; flex-shrink: 0;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  padding: 12px; overflow-y: auto;
+}
+.imp-noinspect { color: var(--text-dim); font-size: 13px; line-height: 1.5; padding: 20px 4px; }
+.imp-inspecthead {
+  font-size: 11px; font-weight: 600; letter-spacing: .5px;
+  color: var(--text-dim); text-transform: uppercase; margin-bottom: 10px;
+  padding-bottom: 6px; border-bottom: 1px solid var(--border-soft);
+}
+.imp-field { margin-bottom: 8px; }
+.imp-field label { display: block; font-size: 11px; color: var(--text-dim); margin-bottom: 3px; }
+.imp-field input, .imp-field select {
+  width: 100%; height: 28px; padding: 0 6px;
+  border: 1px solid var(--border); border-radius: 5px; background: var(--surface); color: var(--text);
+  font-size: 12px;
+}
+.imp-field input[type=color] { padding: 0; height: 30px; }
+.imp-check { font-size: 12px; color: var(--text-dim); margin-right: 10px; cursor: pointer; }
+.imp-check input { margin-right: 4px; }
+
+#impPresent {
+  position: fixed; inset: 0; z-index: 5000;
+  background: #000; display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+}
+.imp-pres-slide {
+  position: relative;
+  width: min(100vw, calc(100vh * 16/9));
+  height: min(100vh, calc(100vw * 9/16));
+  background: #fff; overflow: hidden;
+}
+.imp-pres-controls {
+  position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 12px;
+  background: rgba(0,0,0,.6); color: #fff;
+  padding: 8px 16px; border-radius: 24px; font-size: 14px;
+}
+.imp-pres-controls button {
+  background: rgba(255,255,255,.15); border: 0; color: #fff;
+  width: 32px; height: 32px; border-radius: 50%; cursor: pointer; font-size: 14px;
+}
+.imp-pres-controls button:hover { background: rgba(255,255,255,.3); }
+
+/* ==========================================================================
+   Markdown (moved here from js/markdown.js in v2.0.0)
+   ========================================================================== */
+.md-wrap { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.md-toolbar { display: flex; align-items: center; gap: 2px; flex-wrap: wrap;
+  min-height: var(--tb-h); padding: 5px 10px; background: var(--surface);
+  border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.md-split { display: flex; flex: 1; min-height: 0; }
+.md-editor-pane { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.md-divider { width: 1px; background: var(--border); flex-shrink: 0; }
+.md-preview-pane { flex: 1; min-width: 0; overflow: auto; background: var(--bg); }
+.md-editor {
+  flex: 1; width: 100%; border: 0; outline: none; resize: none; padding: 18px 24px;
+  background: var(--surface); color: var(--text);
+  font-family: var(--font-mono); font-size: 14px; line-height: 1.6; tab-size: 2;
+}
+.md-readmode .md-preview-pane { flex: 1; }
+
+/* Rendered markdown preview */
+.md-preview {
+  max-width: 760px; margin: 24px auto; padding: 8px 24px;
+  font-family: var(--font-doc); font-size: 16px; line-height: 1.6; color: var(--text);
+  word-wrap: break-word;
+}
+.md-preview h1 { font-size: 2em; border-bottom: 1px solid var(--border-soft); padding-bottom: .3em; margin: .8em 0 .5em; }
+.md-preview h2 { font-size: 1.5em; border-bottom: 1px solid var(--border-soft); padding-bottom: .3em; margin: 1em 0 .5em; }
+.md-preview h3 { font-size: 1.25em; margin: 1em 0 .4em; }
+.md-preview h4 { font-size: 1em; margin: 1em 0 .3em; }
+.md-preview h5, .md-preview h6 { color: var(--text-dim); margin: 1em 0 .3em; }
+.md-preview p { margin: 0 0 12px; }
+.md-preview a { color: var(--accent); }
+.md-preview ul, .md-preview ol { margin: 0 0 12px; padding-left: 28px; }
+.md-preview li { margin: 3px 0; }
+.md-preview code {
+  font-family: var(--font-mono); font-size: .9em;
+  background: var(--surface-3); padding: 2px 5px; border-radius: 4px;
+}
+.md-preview pre { background: var(--surface-3); padding: 14px; border-radius: 6px; overflow: auto; margin: 0 0 12px; }
+.md-preview pre code { background: none; padding: 0; font-size: 13px; }
+.md-preview blockquote {
+  border-left: 4px solid var(--border); margin: 0 0 12px; padding: 4px 16px;
+  color: var(--text-dim);
+}
+.md-preview table { border-collapse: collapse; margin: 0 0 12px; }
+.md-preview th, .md-preview td { border: 1px solid var(--border); padding: 6px 12px; text-align: left; }
+.md-preview th { background: var(--surface-2); }
+.md-preview img { max-width: 100%; }
+.md-preview hr { border: 0; border-top: 2px solid var(--border-soft); margin: 20px 0; }
+.md-preview input[type=checkbox] { margin-right: 6px; }
+
+/* ==========================================================================
    Print — hide the app chrome, show only the active document.
    ========================================================================== */
 @media print {

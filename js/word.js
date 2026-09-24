@@ -461,7 +461,7 @@ const Writer = (() => {
       }
       const text = await f.text();
       if (ext === 'html' || ext === 'htm') {
-        openIntoDoc(f.name, f.handle || null, sanitizeHtml(text));
+        openIntoDoc(f.name, f.handle || null, Sanitize.html(Sanitize.bodyOf(text)));
       } else {
         // Plain text: convert to paragraphs
         const html = text.split(/\r?\n/).map(l => `<p>${escapeHtml(l) || '<br>'}</p>`).join('');
@@ -475,17 +475,14 @@ const Writer = (() => {
 
   // Read a .docx (ZIP of WordprocessingML) and convert to editable HTML via mammoth.
   async function openDocx(f) {
-    if (typeof window.mammoth === 'undefined') {
-      UI.toast('docx reader not loaded', 'error');
-      return;
-    }
     UI.toast(`Opening ${f.name}…`, 'info');
     try {
+      await Libs.need('mammoth');
       // mammoth needs an ArrayBuffer view of the bytes
       const ab = f.bytes.buffer.slice(f.bytes.byteOffset, f.bytes.byteOffset + f.bytes.byteLength);
       const result = await window.mammoth.convertToHtml({ arrayBuffer: ab });
       const html = result.value || '<p><br></p>';
-      openIntoDoc(f.name, f.handle || null, sanitizeHtml(html));
+      openIntoDoc(f.name, f.handle || null, Sanitize.html(html));
       const warns = (result.messages || []).filter(m => m.type === 'warning').length;
       UI.toast(`Opened ${f.name}${warns ? ` (${warns} formatting hints skipped)` : ''}`, 'success');
     } catch (e) {
@@ -496,51 +493,64 @@ const Writer = (() => {
   function escapeHtml(s) {
     return s.replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
   }
-  // Light sanitization: keep common formatting tags, strip scripts/handlers.
-  function sanitizeHtml(html) {
-    // Use the browser's parser via a temp element, then walk and clean.
-    const tmp = document.createElement('div');
-    tmp.innerHTML = html;
-    tmp.querySelectorAll('script, link, meta, iframe, object, embed, style').forEach(n => n.remove());
-    tmp.querySelectorAll('*').forEach(el => {
-      [...el.attributes].forEach(a => {
-        if (/^on/i.test(a.name)) el.removeAttribute(a.name);
-        if (a.name === 'href' && /^\s*javascript:/i.test(a.value)) el.removeAttribute(a.name);
-        if (a.name === 'src' && /^\s*javascript:/i.test(a.value)) el.removeAttribute(a.name);
-      });
-    });
-    // Pull the body content if it was a full HTML doc
-    const bodyEl = tmp.querySelector('body');
-    return (bodyEl ? bodyEl.innerHTML : tmp.innerHTML);
-  }
+  const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 
   async function saveDoc(asNew) {
     const d = activeDoc(); if (!d) return;
     const ext = d.name.split('.').pop().toLowerCase();
-    // Default save format = .html (round-trips cleanly); user picks others via Export.
-    const outName = (ext === 'html' || ext === 'htm' || ext === 'txt') ? d.name : d.name.replace(/\.[^.]*$/, '') + '.html';
-    let content, mime;
-    if (outName.endsWith('.txt')) {
-      content = editor.innerText;
-      mime = 'text/plain';
-    } else {
-      content = '<!DOCTYPE html>\n<html><head><meta charset="utf-8"><title>' + escapeHtml(stripExt(d.name)) +
-        '</title></head><body>\n' + editor.innerHTML + '\n</body></html>';
-      mime = 'text/html';
-    }
-    const bytes = new TextEncoder().encode(content);
     try {
-      const res = await FS.save({ name: outName, mime, bytes, handle: asNew ? null : d.handle });
-      if (res.handle) d.handle = res.handle;
-      d.name = outName;
-      d.dirty = false;
-      updateName();
-      renderTabs();
-      autosaveSoon();
-      UI.toast(res.downloaded ? `Downloaded ${outName}` : `Saved ${outName}`, 'success');
+      // Word documents save back as Word. (v1 saved them as .html — and
+      // wrote that HTML into the opened .docx file itself.)
+      if (ext === 'docx' || ext === 'doc') return await saveWord(d, asNew, ext);
+      // Everything else defaults to .html, which round-trips losslessly.
+      const outName = (ext === 'html' || ext === 'htm' || ext === 'txt') ? d.name : stripExt(d.name) + '.html';
+      let content, mime;
+      if (outName.endsWith('.txt')) {
+        content = editor.innerText;
+        mime = 'text/plain';
+      } else {
+        content = '<!DOCTYPE html>\n<html><head><meta charset="utf-8"><title>' + escapeHtml(stripExt(d.name)) +
+          '</title></head><body>\n' + editor.innerHTML + '\n</body></html>';
+        mime = 'text/html';
+      }
+      const bytes = new TextEncoder().encode(content);
+      const sameFile = outName === d.name;
+      const res = await FS.save({ name: outName, mime, bytes, handle: asNew || !sameFile ? null : d.handle });
+      afterSave(d, res, outName);
     } catch (e) {
       if (e.name !== 'AbortError') UI.toast('Save failed: ' + e.message, 'error');
     }
+  }
+
+  async function saveWord(d, asNew, ext) {
+    const canOverwrite = !asNew && ext === 'docx' && d.handle;
+    if (canOverwrite && !d.docxOverwriteOk) {
+      const ok = await UI.confirm({
+        title: `Overwrite ${d.name}?`,
+        message: 'PocketOffice rewrites the Word file from what you see here. Text, headings, lists, tables, ' +
+          'images, links and character formatting are kept; page layout, headers/footers, comments and tracked ' +
+          'changes from the original are not. Use Save As… to keep the original file untouched.',
+        okText: 'Overwrite',
+      });
+      if (!ok) return;
+      d.docxOverwriteOk = true;
+    }
+    await Libs.need('docx');
+    const bytes = await DocExport.toDocx(editor);
+    const outName = stripExt(d.name) + '.docx';
+    const res = await FS.save({ name: outName, mime: DOCX_MIME, bytes, handle: canOverwrite ? d.handle : null });
+    afterSave(d, res, outName);
+  }
+
+  function afterSave(d, res, outName) {
+    if (res.handle) d.handle = res.handle;
+    // The picker may have been given a different name; the handle knows.
+    d.name = (res.handle && res.handle.name) || outName;
+    d.dirty = false;
+    updateName();
+    renderTabs();
+    autosaveSoon();
+    UI.toast(res.downloaded ? `Downloaded ${d.name}` : `Saved ${d.name}`, 'success');
   }
 
   async function exportMenu() {
@@ -580,145 +590,18 @@ const Writer = (() => {
     }
   }
 
+  // Inline formatting, links, images, nested lists and tables are kept —
+  // see docexport.js.
   async function exportPdf(base) {
-    const { jsPDF } = window.jspdf;
-    const pdf = new jsPDF({ unit: 'pt', format: 'a4' });
-    PdfFonts.register(pdf);   // bundled families become usable below
-    const pageW = pdf.internal.pageSize.getWidth();
-    const pageH = pdf.internal.pageSize.getHeight();
-    const margin = 56; // ~0.78in
-    const maxWidth = pageW - margin * 2;
-    let y = margin;
-
-    // Walk block-level children and render line by line. Simple but reliable.
-    const blocks = [...editor.children];
-    const addLine = (text, opts) => {
-      const size = opts.size || 12;
-      const { family, style } = PdfFonts.pick(opts.family || null, !!opts.bold, !!opts.italic);
-      pdf.setFont(family, style);
-      pdf.setFontSize(size);
-      const color = opts.color || [20, 20, 20];
-      pdf.setTextColor(color[0], color[1], color[2]);
-      const lines = pdf.splitTextToSize(text, maxWidth) || [];
-      for (const ln of lines) {
-        if (y > pageH - margin) { pdf.addPage(); y = margin; }
-        pdf.text(ln, margin, y);
-        y += size * 1.35;
-      }
-    };
-    // First family name of a computed CSS font list, e.g. "Inter", "Calibri".
-    const firstFontFamily = (cs) => (cs.fontFamily || '').split(',')[0].replace(/["']/g, '').trim() || null;
-    // Per-block font facts from the rendered document.
-    const fontFacts = (el) => {
-      const cs = getComputedStyle(el);
-      return {
-        family: firstFontFamily(cs),
-        bold: parseInt(cs.fontWeight, 10) >= 600,
-        italic: cs.fontStyle === 'italic',
-      };
-    };
-
-    if (!blocks.length) {
-      // fall back to innerText
-      addLine(editor.innerText, {});
-    } else {
-      for (const el of blocks) {
-        const tag = el.tagName.toLowerCase();
-        const ff = fontFacts(el);
-        if (/^h[1-6]$/.test(tag)) {
-          const sz = { h1: 22, h2: 18, h3: 16, h4: 14, h5: 13, h6: 12 }[tag];
-          addLine(el.textContent, { size: sz, bold: true, color: [10, 10, 10], family: ff.family });
-          y += 4;
-        } else if (tag === 'ul' || tag === 'ol') {
-          [...el.children].forEach((li, i) => {
-            addLine((tag === 'ol' ? (i + 1) + '. ' : '•  ') + li.textContent, { size: 12, family: ff.family });
-          });
-          y += 3;
-        } else if (tag === 'blockquote') {
-          addLine('"' + el.textContent + '"', { size: 12, italic: true, color: [90, 90, 90], family: ff.family });
-        } else if (tag === 'pre') {
-          el.textContent.split('\n').forEach(l => addLine(l, { size: 10, family: 'JetBrains Mono' }));
-        } else if (tag === 'table') {
-          // Render table rows as text grid (best-effort)
-          [...el.querySelectorAll('tr')].forEach(tr => {
-            const cells = [...tr.querySelectorAll('td,th')].map(td => td.textContent);
-            addLine(cells.join('   |   '), { size: 10, family: ff.family });
-          });
-        } else {
-          // p, div, etc. — strip HTML tags from innerHTML to preserve inline spacing
-          const text = htmlToPlain(el);
-          addLine(text || '', { size: 12, family: ff.family, bold: ff.bold, italic: ff.italic });
-        }
-        y += 4;
-      }
-    }
-    const ab = pdf.output('arraybuffer');
-    await FS.save({ name: base + '.pdf', mime: 'application/pdf', bytes: new Uint8Array(ab), handle: null });
-  }
-
-  // Convert a rich-text element's content to a flat line, honouring <br> and <strong>.
-  function htmlToPlain(el) {
-    let out = '';
-    const walk = (node) => {
-      node.childNodes.forEach(c => {
-        if (c.nodeType === 3) out += c.nodeValue;
-        else if (c.tagName === 'BR') out += '\n';
-        else walk(c);
-      });
-    };
-    walk(el);
-    return out.replace(/\u00a0/g, ' ');
+    await Libs.need('jspdf');
+    const bytes = await DocExport.toPdf(editor);
+    await FS.save({ name: base + '.pdf', mime: 'application/pdf', bytes, handle: null });
   }
 
   async function exportDocx(base) {
-    if (typeof window.docx === 'undefined') {
-      UI.toast('docx library not loaded', 'error'); return;
-    }
-    const D = window.docx;
-    const children = [];
-    const pushPara = (text, opts = {}) => {
-      children.push(new D.Paragraph({
-        children: [new D.TextRun({ text, bold: opts.bold, italics: opts.italics, size: opts.size, font: opts.font })],
-        heading: opts.heading,
-      }));
-    };
-
-    const blocks = [...editor.children];
-    if (!blocks.length) pushPara(editor.innerText);
-    for (const el of blocks) {
-      const tag = el.tagName.toLowerCase();
-      if (/^h[1-6]$/.test(tag)) {
-        pushPara(el.textContent, { heading: D.HeadingLevel['HEADING_' + Math.min(6, +tag[1])], bold: true });
-      } else if (tag === 'ul') {
-        [...el.children].forEach(li => children.push(new D.Paragraph({ text: li.textContent, bullet: { level: 0 } })));
-      } else if (tag === 'ol') {
-        [...el.children].forEach(li => children.push(new D.Paragraph({ text: li.textContent, numbering: { reference: 'num', level: 0 } })));
-      } else if (tag === 'blockquote') {
-        pushPara(el.textContent, { italics: true });
-      } else if (tag === 'pre') {
-        pushPara(el.textContent, { font: 'Courier New', size: 20 });
-      } else if (tag === 'table') {
-        const rows = [...el.querySelectorAll('tr')].map(tr =>
-          new D.TableRow({
-            children: [...tr.querySelectorAll('td,th')].map(td =>
-              new D.TableCell({ children: [new D.Paragraph(td.textContent || ' ')] })
-            ),
-          })
-        );
-        children.push(new D.Table({ rows, width: { size: 100, type: D.WidthType.PERCENTAGE } }));
-      } else {
-        // Split on <br> within the paragraph.
-        const lines = htmlToPlain(el).split('\n');
-        lines.forEach((l, i) => pushPara(l));
-      }
-    }
-    const doc = new D.Document({
-      numbering: { config: [{ reference: 'num', levels: [{ level: 0, format: D.LevelFormat.DECIMAL, text: '%1.', alignment: D.AlignmentType.START }] }] },
-      sections: [{ properties: {}, children }],
-    });
-    const blob = await D.Packer.toBlob(doc);
-    const buf = new Uint8Array(await blob.arrayBuffer());
-    await FS.save({ name: base + '.docx', mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', bytes: buf, handle: null });
+    await Libs.need('docx');
+    const bytes = await DocExport.toDocx(editor);
+    await FS.save({ name: base + '.docx', mime: DOCX_MIME, bytes, handle: null });
   }
 
   // ----- Print -----
@@ -772,22 +655,36 @@ const Writer = (() => {
   }
   function autosaveSoon() {
     clearTimeout(autosaveTimer);
-    autosaveTimer = setTimeout(async () => {
-      try {
-        await Storage.save('writer:docs', {
-          docs: docs.map(d => ({
-            id: d.id, name: d.name, dirty: d.dirty,
-            html: d.id === activeId ? editor.innerHTML : d.html,
-          })),
-        });
-        const el = $('statusAutosave');
-        if (el) {
-          const t = new Date().toLocaleTimeString();
-          el.textContent = `autosaved ${t}`;
-          setTimeout(() => { if (el.textContent === `autosaved ${t}`) el.textContent = ''; }, 2000);
-        }
-      } catch (e) { /* ignore */ }
-    }, 800);
+    autosaveTimer = setTimeout(autosaveNow, 800);
+  }
+  async function autosaveNow() {
+    clearTimeout(autosaveTimer);
+    autosaveTimer = null;
+    if (!editor || !docs.length) return;
+    // File handles are stored too, so Ctrl+S after a restart saves back to
+    // the same file instead of asking where.
+    const record = {
+      active: activeId,
+      docs: docs.map(d => ({
+        id: d.id, name: d.name, dirty: d.dirty, handle: d.handle || null,
+        html: d.id === activeId ? editor.innerHTML : d.html,
+      })),
+    };
+    try {
+      await Util.saveWithHandles('writer:docs', record,
+        (r) => Object.assign({}, r, { docs: r.docs.map(d => Object.assign({}, d, { handle: null })) }));
+      const el = $('statusAutosave');
+      if (el) {
+        const t = new Date().toLocaleTimeString();
+        el.textContent = `autosaved ${t}`;
+        setTimeout(() => { if (el.textContent === `autosaved ${t}`) el.textContent = ''; }, 2000);
+      }
+    } catch (e) { /* ignore */ }
+  }
+  // Called when the page is being hidden or closed: write any pending
+  // autosave now rather than losing the last 800 ms of typing.
+  function flush() {
+    if (autosaveTimer) autosaveNow();
   }
 
   // ----- Toolbar state (active buttons) -----
@@ -813,9 +710,6 @@ const Writer = (() => {
     doc.innerHTML = '<p><br></p>';
     editor.appendChild(doc);
     editor = doc;
-
-    // Load CSS for the writer surface (append to app.css via <style> to keep it simple)
-    injectWriterStyles();
 
     buildToolbar();
 
@@ -843,17 +737,22 @@ const Writer = (() => {
     try {
       const saved = await Storage.load('writer:docs');
       if (saved && Array.isArray(saved.docs) && saved.docs.length) {
-        saved.docs.forEach((s, i) => {
+        const seen = new Set();
+        saved.docs.forEach((s) => {
+          const id = (typeof s.id === 'string' && !seen.has(s.id)) ? s.id : null;
+          if (id) seen.add(id);
           docs.push({
-            id: s.id || ('w' + (i + 1)),
+            id,
             name: s.name || 'Untitled.html',
-            handle: null,
+            handle: (s.handle && typeof s.handle === 'object') ? s.handle : null,
             dirty: !!s.dirty,
             html: s.html || '<p><br></p>',
           });
         });
-        docSeq = docs.length + 1;
-        activateDoc(docs[0].id);
+        // Continue numbering after the highest id in use (not the tab count).
+        docSeq = Util.nextSeq([...seen], 'w');
+        docs.forEach(d => { if (!d.id) d.id = 'w' + (docSeq++); });
+        activateDoc(saved.active && docs.some(d => d.id === saved.active) ? saved.active : docs[0].id);
       } else {
         // Migrate the pre-tabs single-document autosave (v1.2.x).
         const legacy = await Storage.load('writer:doc');
@@ -869,54 +768,9 @@ const Writer = (() => {
     updateStatus();
   }
 
-  function injectWriterStyles() {
-    if (document.getElementById('writer-styles')) return;
-    const s = document.createElement('style');
-    s.id = 'writer-styles';
-    s.textContent = `
-      .writer-surface {
-        flex: 1; overflow: auto;
-        background: var(--bg);
-        padding: 0;
-      }
-      .writer-doc {
-        background: var(--surface);
-        max-width: 8.5in;
-        min-height: 11in;
-        margin: 24px auto;
-        padding: 1in 1in;
-        box-shadow: var(--shadow);
-        border-radius: 2px;
-        font-family: var(--font-doc);
-        font-size: 16px;
-        line-height: 1.5;
-        color: #1a1a1a;
-        outline: none;
-      }
-      .writer-doc:focus { outline: none; }
-      .writer-doc p { margin: 0 0 12px; }
-      .writer-doc h1 { font-size: 2em; margin: .67em 0; }
-      .writer-doc h2 { font-size: 1.5em; margin: .75em 0; }
-      .writer-doc h3 { font-size: 1.17em; margin: .83em 0; }
-      .writer-doc h4 { font-size: 1em; margin: 1.12em 0; }
-      .writer-doc ul, .writer-doc ol { margin: 0 0 12px; padding-left: 32px; }
-      .writer-doc blockquote {
-        border-left: 3px solid #ccc; padding-left: 12px; color: #555; margin: 0 0 12px;
-      }
-      .writer-doc pre {
-        background: #f4f4f4; padding: 10px; border-radius: 4px;
-        font-family: var(--font-mono); font-size: 13px; white-space: pre-wrap;
-      }
-      .writer-doc a { color: var(--accent); }
-      .writer-doc img { max-width: 100%; }
-      body.theme-dark .writer-doc { color: #222; background: #fdfdfd; }
-    `;
-    document.head.appendChild(s);
-  }
-
   function onActivate() {
     setTimeout(() => editor && editor.focus(), 0);
   }
 
-  return { boot, onActivate, undo: doUndo, redo: doRedo, reopen: reopenDoc };
+  return { boot, onActivate, flush, undo: doUndo, redo: doRedo, reopen: reopenDoc };
 })();

@@ -38,7 +38,6 @@ const Impress = (() => {
   }
 
   function boot() {
-    injectStyles();
     buildToolbar();
     buildLayout();
     wireCanvas();
@@ -54,21 +53,31 @@ const Impress = (() => {
     });
     Storage.load('impress:decks').then(saved => {
       if (saved && Array.isArray(saved.decks) && saved.decks.length) {
+        const seen = new Set();
         for (const d of saved.decks) {
+          const id = (typeof d.id === 'string' && !seen.has(d.id)) ? d.id : null;
+          if (id) seen.add(id);
+          const sl = normalizeSlides(d.slides);
           decks.push({
-            id: d.id || ('d' + (decks.length + 1)),
+            id,
             name: d.name || 'Deck',
-            slides: (Array.isArray(d.slides) && d.slides.length) ? d.slides : freshDeckSlides(),
-            current: d.current || 0,
+            slides: sl.length ? sl : freshDeckSlides(),
+            current: Math.min(Math.max(0, d.current | 0), Math.max(0, sl.length - 1)),
           });
         }
-        deckSeq = decks.length + 1;
+        // Continue numbering after the highest ids in use (not the counts).
+        deckSeq = Util.nextSeq([...seen], 'd');
+        decks.forEach(d => { if (!d.id) d.id = 'd' + (deckSeq++); });
+        seq = Util.nextSeq(decks.flatMap(d => d.slides.flatMap(s => s.elements.map(e => e.id))), 'e');
+        decks.forEach(d => ensureElementIds(d.slides));
         activateDeck(saved.active && decks.some(d => d.id === saved.active) ? saved.active : decks[0].id);
       } else {
         // Migrate the pre-tabs single-deck autosave (v1.2.x).
         Storage.load('impress:deck').then(legacy => {
-          if (legacy && Array.isArray(legacy.slides) && legacy.slides.length) {
-            addDeck({ slides: legacy.slides });
+          const sl = legacy ? normalizeSlides(legacy.slides) : [];
+          if (sl.length) {
+            ensureElementIds(sl);
+            addDeck({ slides: sl });
           } else {
             addDeck();
           }
@@ -76,6 +85,47 @@ const Impress = (() => {
       }
     }).catch(() => { if (!decks.length) addDeck(); });
   }
+
+  // Deck data from files and storage is untrusted: keep only known element
+  // kinds, finite numbers, #hex colors and base64 image data URLs. (v1
+  // pasted these values into HTML strings, so a crafted .json deck could
+  // inject markup.)
+  const KINDS = new Set(['text', 'rect', 'ellipse', 'image']);
+  const IMG_URL = /^data:image\/(png|jpe?g|gif|webp);base64,[A-Za-z0-9+/=\s]*$/;
+  function normalizeSlides(list) {
+    if (!Array.isArray(list)) return [];
+    return list.filter(sl => sl && typeof sl === 'object').map(sl => ({
+      bg: Util.safeColor(sl.bg, '#ffffff'),
+      elements: (Array.isArray(sl.elements) ? sl.elements : []).filter(e => e && KINDS.has(e.kind)).map(e => {
+        const el = {
+          id: typeof e.id === 'string' ? e.id : '', kind: e.kind,
+          x: Util.safeNum(e.x, 10), y: Util.safeNum(e.y, 10),
+          w: Util.safeNum(e.w, 20), h: Util.safeNum(e.h, 10),
+        };
+        if (e.text != null) el.text = String(e.text);
+        if (e.fontSize != null) el.fontSize = Util.safeNum(e.fontSize, 18);
+        if (typeof e.fontFamily === 'string' && e.fontFamily) el.fontFamily = e.fontFamily.replace(/["'<>;{}\\]/g, '');
+        if (e.bold) el.bold = true;
+        if (e.italic) el.italic = true;
+        if (e.color) el.color = Util.safeColor(e.color, '#000000');
+        if (e.fill) el.fill = Util.safeColor(e.fill, '#4a90e2');
+        if (e.align === 'left' || e.align === 'center' || e.align === 'right') el.align = e.align;
+        if (typeof e.dataUrl === 'string' && IMG_URL.test(e.dataUrl)) el.dataUrl = e.dataUrl;
+        return el;
+      }),
+    }));
+  }
+  // Give every element a unique id within its deck, continuing `seq`.
+  function ensureElementIds(sl) {
+    const used = new Set();
+    for (const slide of sl) {
+      for (const el of slide.elements) {
+        if (!el.id || used.has(el.id)) el.id = 'e' + (seq++);
+        used.add(el.id);
+      }
+    }
+  }
+  const fileStem = () => ((activeDeck() && activeDeck().name) || 'presentation').replace(/[\\/:*?"<>|]/g, ' ').trim() || 'presentation';
 
   function freshDeckSlides() {
     return [{
@@ -275,7 +325,7 @@ const Impress = (() => {
       item.className = 'impress-slideitem' + (i === current ? ' active' : '');
       item.dataset.idx = i;
       item.innerHTML = `
-        <div class="impress-thumb" style="background:${s.bg || '#fff'}"></div>
+        <div class="impress-thumb"></div>
         <div class="impress-slidemeta">
           <span class="num">${i + 1}</span>
           <span style="flex:1"></span>
@@ -286,6 +336,7 @@ const Impress = (() => {
         </div>`;
       // Render thumbnail content
       const thumb = item.querySelector('.impress-thumb');
+      thumb.style.background = Util.safeColor(s.bg, '#ffffff');
       thumb.style.position = 'relative';
       s.elements.forEach(el => thumb.appendChild(thumbEl(el)));
       list.appendChild(item);
@@ -466,8 +517,8 @@ const Impress = (() => {
     });
   }
 
-  function editText(el) {
-    const v = prompt_full('Edit text', el.text || '', 'Type text (Ctrl+Enter for newline)');
+  async function editText(el) {
+    const v = await prompt_full('Edit text', el.text || '', 'Type text (Ctrl+Enter to finish)');
     if (v === null) return;
     snapshot();
     el.text = v;
@@ -492,6 +543,7 @@ const Impress = (() => {
   }
 
   // ---------- Inspector (right panel) ----------
+  const num1 = (n) => Util.safeNum(n, 0).toFixed(1);
   function renderInspector() {
     const ins = $('impInspector');
     if (!selected) {
@@ -501,18 +553,18 @@ const Impress = (() => {
     const el = slides[current].elements.find(x => x.id === selected);
     if (!el) { selected = null; renderInspector(); return; }
     ins.innerHTML = `
-      <div class="imp-inspecthead">${el.kind.toUpperCase()}</div>
-      <div class="imp-field"><label>Left</label><input type="number" id="iX" value="${el.x.toFixed(1)}"></div>
-      <div class="imp-field"><label>Top</label><input type="number" id="iY" value="${el.y.toFixed(1)}"></div>
-      <div class="imp-field"><label>Width</label><input type="number" id="iW" value="${el.w.toFixed(1)}"></div>
-      <div class="imp-field"><label>Height</label><input type="number" id="iH" value="${el.h.toFixed(1)}"></div>
+      <div class="imp-inspecthead">${KINDS.has(el.kind) ? el.kind.toUpperCase() : ''}</div>
+      <div class="imp-field"><label>Left</label><input type="number" id="iX" value="${num1(el.x)}"></div>
+      <div class="imp-field"><label>Top</label><input type="number" id="iY" value="${num1(el.y)}"></div>
+      <div class="imp-field"><label>Width</label><input type="number" id="iW" value="${num1(el.w)}"></div>
+      <div class="imp-field"><label>Height</label><input type="number" id="iH" value="${num1(el.h)}"></div>
       ${el.kind === 'text' ? `
         <div class="imp-field"><label>Font</label><select id="iFont">
           <option value="">Theme default</option>
           ${Fonts.options(el.fontFamily || '')}
         </select></div>
-        <div class="imp-field"><label>Font size</label><input type="number" id="iFS" value="${el.fontSize || 18}"></div>
-        <div class="imp-field"><label>Color</label><input type="color" id="iCol" value="${el.color || '#000000'}"></div>
+        <div class="imp-field"><label>Font size</label><input type="number" id="iFS" value="${Util.safeNum(el.fontSize, 18)}"></div>
+        <div class="imp-field"><label>Color</label><input type="color" id="iCol" value="${Util.safeColor(el.color, '#000000')}"></div>
         <div class="imp-field"><label>Align</label><select id="iAlign">
           <option value="left" ${el.align==='left'?'selected':''}>Left</option>
           <option value="center" ${el.align==='center'?'selected':''}>Center</option>
@@ -525,7 +577,7 @@ const Impress = (() => {
         <button class="tb-btn" id="iEditText" style="width:100%">✏ Edit text</button>
       ` : ''}
       ${(el.kind === 'rect' || el.kind === 'ellipse') ? `
-        <div class="imp-field"><label>Fill</label><input type="color" id="iFill" value="${el.fill || '#4a90e2'}"></div>
+        <div class="imp-field"><label>Fill</label><input type="color" id="iFill" value="${Util.safeColor(el.fill, '#4a90e2')}"></div>
       ` : ''}
       <button class="tb-btn" id="iDelete" style="width:100%;color:var(--danger)">🗑 Delete element</button>
     `;
@@ -602,8 +654,12 @@ const Impress = (() => {
 
   // Load an opened deck into the pristine active tab, or a new tab.
   function openIntoDeck(name, sl) {
-    seq = 1;
-    sl.forEach(s => (s.elements || []).forEach(el => (el.id = 'e' + (seq++))));
+    sl = normalizeSlides(sl);
+    if (!sl.length) { UI.toast('No slides found in file', 'warn'); return; }
+    // Fresh ids from the running counter (v1 reset it to 1, which could
+    // collide with elements already in other open decks).
+    sl.forEach(s => s.elements.forEach(el => (el.id = '')));
+    ensureElementIds(sl);
     const cur = activeDeck();
     if (cur && isFreshSlides(slides)) {
       slides = sl; current = 0; selected = null;
@@ -629,9 +685,9 @@ const Impress = (() => {
   }
 
   async function openPptx(f) {
-    if (typeof window.JSZip === 'undefined') { UI.toast('JSZip not loaded', 'error'); return; }
     UI.toast(`Opening ${f.name}…`, 'info');
     try {
+      await Libs.need('jszip');
       const zip = await window.JSZip.loadAsync(f.bytes);
       // Find all slide XML files and sort by slide number.
       const slideFiles = Object.keys(zip.files)
@@ -683,8 +739,8 @@ const Impress = (() => {
           }
         }
       }
-      openIntoDeck(f.name.replace(/\.[^.]+$/, ''), newSlides);
       const skipped = newSlides.reduce((n, s) => n + (s.elements || []).filter(e => e._unsupported).length, 0);
+      openIntoDeck(f.name.replace(/\.[^.]+$/, ''), newSlides);
       UI.toast(`Imported ${newSlides.length} slide${newSlides.length === 1 ? '' : 's'}${skipped ? ` (${skipped} item${skipped===1?'':'s'} skipped)` : ''}`, 'success');
     } catch (e) {
       UI.toast(`Could not read ${f.name}: ${e.message || e}`, 'error');
@@ -947,13 +1003,13 @@ const Impress = (() => {
         }),
       }));
       const bytes = new TextEncoder().encode(JSON.stringify({ slides: clean }, null, 2));
-      await FS.save({
-        name: 'presentation.json',
+      const res = await FS.save({
+        name: fileStem() + '.json',
         mime: 'application/json',
         bytes,
         handle: null,
       });
-      UI.toast('Saved presentation.json (re-openable in Impress)', 'success');
+      UI.toast(`Saved ${(res.handle && res.handle.name) || fileStem() + '.json'} (re-openable in Impress)`, 'success');
     } catch (e) {
       if (e.name !== 'AbortError') UI.toast('Save failed: ' + (e.message || e), 'error');
     }
@@ -1005,7 +1061,7 @@ const Impress = (() => {
   }
   async function exportPptx() {
     try {
-      if (typeof window.PptxGenJS === 'undefined') { UI.toast('pptx library not loaded', 'error'); return; }
+      await Libs.need('pptx');
       const P = window.PptxGenJS;
       const p = new P();
       // 13.33 x 7.5 inches = 16:9 widescreen
@@ -1042,14 +1098,15 @@ const Impress = (() => {
       }
       const b64 = await p.write({ outputType: 'base64' });
       const bytes = base64ToBytes(b64);
-      await FS.save({ name: 'presentation.pptx', mime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation', bytes, handle: null });
-      UI.toast('Exported presentation.pptx', 'success');
+      await FS.save({ name: fileStem() + '.pptx', mime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation', bytes, handle: null });
+      UI.toast(`Exported ${fileStem()}.pptx`, 'success');
     } catch (e) {
-      UI.toast('PPTX export failed: ' + (e.message || e), 'error');
+      if (e.name !== 'AbortError') UI.toast('PPTX export failed: ' + (e.message || e), 'error');
     }
   }
   async function exportPdf() {
     try {
+      await Libs.need('jspdf');
       const { jsPDF } = window.jspdf;
       const pdf = new jsPDF({ orientation: 'landscape', unit: 'pt', format: [SLIDE_W, SLIDE_H] });
       PdfFonts.register(pdf);   // bundled families become usable below
@@ -1084,10 +1141,10 @@ const Impress = (() => {
         }
       });
       const ab = pdf.output('arraybuffer');
-      await FS.save({ name: 'presentation.pdf', mime: 'application/pdf', bytes: new Uint8Array(ab), handle: null });
-      UI.toast('Exported presentation.pdf', 'success');
+      await FS.save({ name: fileStem() + '.pdf', mime: 'application/pdf', bytes: new Uint8Array(ab), handle: null });
+      UI.toast(`Exported ${fileStem()}.pdf`, 'success');
     } catch (e) {
-      UI.toast('PDF export failed: ' + (e.message || e), 'error');
+      if (e.name !== 'AbortError') UI.toast('PDF export failed: ' + (e.message || e), 'error');
     }
   }
   function hexNo(s) { return (s || '').replace('#','').toUpperCase(); }
@@ -1119,142 +1176,29 @@ const Impress = (() => {
     dirty = true;
     renderTabs();
     clearTimeout(autosaveTimer);
-    autosaveTimer = setTimeout(async () => {
-      try {
-        const dumpDecks = decks.map(d => ({
-          id: d.id, name: d.name,
-          slides: d.id === activeDeckId ? slides : d.slides,
-          current: d.id === activeDeckId ? current : d.current,
-        }));
-        await Storage.save('impress:decks', { decks: dumpDecks, active: activeDeckId });
-        dirty = false;
-      } catch (e) { /* ignore */ }
-    }, 800);
+    autosaveTimer = setTimeout(autosaveNow, 800);
   }
-
-  // ---------- Styles ----------
-  function injectStyles() {
-    if (document.getElementById('impress-styles')) return;
-    const s = document.createElement('style');
-    s.id = 'impress-styles';
-    s.textContent = `
-      .impress-wrap { display: flex; flex-direction: column; flex: 1; min-height: 0; }
-      .impress-row { display: flex; flex: 1; min-height: 0; }
-      .impress-sidebar {
-        width: 180px; flex-shrink: 0;
-        background: var(--surface-2);
-        border-right: 1px solid var(--border);
-        display: flex; flex-direction: column;
-        overflow: hidden;
-      }
-      .impress-sidehead {
-        display: flex; align-items: center; justify-content: space-between;
-        padding: 6px 10px;
-        font-size: 12px; font-weight: 600; color: var(--text-dim);
-        border-bottom: 1px solid var(--border);
-        text-transform: uppercase; letter-spacing: .5px;
-      }
-      .impress-slidelist { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 8px; }
-      .impress-slideitem {
-        background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
-        padding: 4px; cursor: pointer; transition: border-color .12s;
-      }
-      .impress-slideitem:hover { border-color: var(--accent); }
-      .impress-slideitem.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
-      .impress-thumb {
-        width: 100%; aspect-ratio: 16/9;
-        background: #fff; border: 1px solid var(--border-soft); border-radius: 3px;
-        position: relative; overflow: hidden;
-      }
-      .impress-slidemeta {
-        display: flex; align-items: center; gap: 2px; margin-top: 4px; font-size: 11px;
-      }
-      .impress-slidemeta .num { font-weight: 600; color: var(--text-dim); padding: 0 4px; }
-      .impress-slidemeta button {
-        background: transparent; border: 0; color: var(--text-faint); cursor: pointer;
-        font-size: 11px; padding: 2px 3px; border-radius: 3px;
-      }
-      .impress-slidemeta button:hover { background: var(--surface-3); color: var(--text); }
-      .impress-slidemeta .del:hover { color: var(--danger); }
-
-      .impress-stage {
-        flex: 1; min-width: 0; padding: 24px;
-        display: grid; place-items: center;
-        background: var(--bg);
-        overflow: auto;
-      }
-      .impress-canvas {
-        width: min(960px, 100%); aspect-ratio: 16/9;
-        background: #fff; box-shadow: var(--shadow);
-        border-radius: 3px; position: relative;
-        outline: none;
-      }
-      .imp-el {
-        position: absolute; cursor: move; user-select: none;
-        box-sizing: border-box;
-      }
-      .imp-el.selected { outline: 2px solid var(--accent); outline-offset: 1px; }
-      .imp-text { padding: 4px 6px; }
-      .imp-shape { border: 1px solid rgba(0,0,0,.06); }
-      .imp-resize {
-        position: absolute; right: -6px; bottom: -6px;
-        width: 12px; height: 12px;
-        background: var(--accent); border: 2px solid #fff; border-radius: 50%;
-        cursor: nwse-resize;
-      }
-
-      .impress-inspector {
-        width: 220px; flex-shrink: 0;
-        background: var(--surface);
-        border-left: 1px solid var(--border);
-        padding: 12px; overflow-y: auto;
-      }
-      .imp-noinspect { color: var(--text-dim); font-size: 13px; line-height: 1.5; padding: 20px 4px; }
-      .imp-inspecthead {
-        font-size: 11px; font-weight: 600; letter-spacing: .5px;
-        color: var(--text-dim); text-transform: uppercase; margin-bottom: 10px;
-        padding-bottom: 6px; border-bottom: 1px solid var(--border-soft);
-      }
-      .imp-field { margin-bottom: 8px; }
-      .imp-field label { display: block; font-size: 11px; color: var(--text-dim); margin-bottom: 3px; }
-      .imp-field input, .imp-field select {
-        width: 100%; height: 28px; padding: 0 6px;
-        border: 1px solid var(--border); border-radius: 5px; background: var(--surface); color: var(--text);
-        font-size: 12px;
-      }
-      .imp-field input[type=color] { padding: 0; height: 30px; }
-      .imp-check { font-size: 12px; color: var(--text-dim); margin-right: 10px; cursor: pointer; }
-      .imp-check input { margin-right: 4px; }
-
-      #impPresent {
-        position: fixed; inset: 0; z-index: 5000;
-        background: #000; display: flex; flex-direction: column;
-        align-items: center; justify-content: center;
-      }
-      .imp-pres-slide {
-        position: relative;
-        width: min(100vw, calc(100vh * 16/9));
-        height: min(100vh, calc(100vw * 9/16));
-        background: #fff; overflow: hidden;
-      }
-      .imp-pres-controls {
-        position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
-        display: flex; align-items: center; gap: 12px;
-        background: rgba(0,0,0,.6); color: #fff;
-        padding: 8px 16px; border-radius: 24px; font-size: 14px;
-      }
-      .imp-pres-controls button {
-        background: rgba(255,255,255,.15); border: 0; color: #fff;
-        width: 32px; height: 32px; border-radius: 50%; cursor: pointer; font-size: 14px;
-      }
-      .imp-pres-controls button:hover { background: rgba(255,255,255,.3); }
-    `;
-    document.head.appendChild(s);
+  async function autosaveNow() {
+    clearTimeout(autosaveTimer);
+    autosaveTimer = null;
+    try {
+      const dumpDecks = decks.map(d => ({
+        id: d.id, name: d.name,
+        slides: d.id === activeDeckId ? slides : d.slides,
+        current: d.id === activeDeckId ? current : d.current,
+      }));
+      await Storage.save('impress:decks', { decks: dumpDecks, active: activeDeckId });
+      dirty = false;
+    } catch (e) { /* ignore */ }
+  }
+  // Page is being hidden/closed: write any pending autosave now.
+  function flush() {
+    if (autosaveTimer) autosaveNow();
   }
 
   function onActivate() {
     setTimeout(() => $('impCanvas') && $('impCanvas').focus(), 0);
   }
 
-  return { boot, onActivate, undo: doUndo, redo: doRedo, reopen: reopenDeck };
+  return { boot, onActivate, flush, undo: doUndo, redo: doRedo, reopen: reopenDeck };
 })();

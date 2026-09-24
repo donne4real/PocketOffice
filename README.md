@@ -7,7 +7,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![No Dependencies](https://img.shields.io/badge/runtime-zero%20deps-success)](#)
 [![Runs Offline](https://img.shields.io/badge/runs-100%25%20offline-success)](#)
-[![Size](https://img.shields.io/badge/size-5.5_MB-informational)](#)
+[![Size](https://img.shields.io/badge/size-6_MB-informational)](#)
 
 **Writer** · **Calc** · **Impress** · **Text Editor** · **PDF Tools** · **Markdown**
 
@@ -45,7 +45,7 @@ closing a tab with unsaved work asks first.
 | | Tool | Highlights | Formats |
 |---|------|------------|---------|
 | 📝 | **Writer** | Tabbed rich-text editor: font/color/headings/lists/tables/images/links, find-replace, autosave, **21 fonts** (incl. 3 bundled). Reads **and** writes `.docx`. | `.docx` `.pdf` `.html` `.txt` |
-| 📊 | **Calc** | Tabbed sheets: 1000×100 grid, hand-written formula engine (60+ functions: `SUM`, `IF`, `VLOOKUP`, `ROUND`, `CONCAT`, `STDEV`…), error values, **charts**. | `.xlsx` `.csv` |
+| 📊 | **Calc** | Tabbed sheets: 1000×100 grid, unit-tested formula engine (70+ functions: `SUM`, `IF`, `VLOOKUP`, `SUMIF`, `COUNTIF`, `ROUND`, `STDEV`…), `$A$1` and `Sheet!A1` references, `%`, error values, fill-down, **charts**. Multi-sheet `.xlsx` import/export keeps formulas. | `.xlsx` `.csv` |
 | 📽️ | **Impress** | Tabbed decks: 16:9 slides, text/shapes/images, drag-and-resize, inspector with **font picker**, **fullscreen present mode**. | `.pptx` `.pdf` `.json` |
 | 📄 | **Text Editor** | Tabbed, line numbers, real tab key, find, word/char count. Multi-format. | any text |
 | 📕 | **PDF Tools** | View, **merge**, **split** (page ranges), reorder, rotate, delete, **add text**, **sign by drawing**, export. | `.pdf` |
@@ -74,9 +74,15 @@ signatures, images, and restructure pages freely.
 
 **PDF export** embeds the three bundled font families (Inter, Lora, JetBrains
 Mono — regular/bold/italic, latin subset) into generated PDFs, so those
-documents look right on any machine. System fonts (Calibri, Cambria, …) still
-export as jsPDF's built-in Helvetica, and they depend on the recipient's PC
-having them installed in `.docx`/`.pptx` exports.
+documents look right on any machine. System fonts (Calibri, Cambria, …) can't
+be embedded: they export as the closest PDF standard font (Helvetica, Times or
+Courier), and in `.docx`/`.pptx` exports they depend on the recipient's PC
+having them installed.
+
+**Writer's `.docx` round trip** keeps text, headings, lists, tables, images,
+links and character formatting. Page layout, headers/footers, comments and
+tracked changes from an opened Word file are not kept, so Save asks before
+overwriting the original (use Save As… to keep it untouched).
 
 ## Quick start
 
@@ -90,8 +96,9 @@ having them installed in `.docx`/`.pptx` exports.
 
 Just open **[donne4real.github.io/PocketOffice](https://donne4real.github.io/PocketOffice/)**.
 
-> Note: the hosted version needs internet only to *load* the page. Once loaded,
-> everything runs locally in your browser.
+> Note: the hosted version needs internet to load the page, and to load each
+> tool's libraries the first time you use that tool. Your documents are
+> processed locally in your browser either way.
 
 ## Keyboard shortcuts
 
@@ -103,6 +110,7 @@ Just open **[donne4real.github.io/PocketOffice](https://donne4real.github.io/Poc
 | `Ctrl+Shift+D` | Toggle dark mode |
 | `Ctrl+B` / `I` / `U` | Bold / italic / underline (Writer) |
 | `Ctrl+Z` / `Ctrl+Y` | Undo / redo in the active tool |
+| `Ctrl+D` | Fill down (Calc) |
 | `F2` | Edit current cell (Calc) |
 | `Enter` / `Tab` / `Arrows` | Navigate cells (Calc) |
 | `Arrows` / `Space` / `Esc` | Navigate / exit present mode (Impress) |
@@ -115,11 +123,12 @@ Tabs in every document tool can be **dragged to reorder**.
 PocketOffice/
 ├── index.html              ← double-click to launch
 ├── start.bat               ← launcher (finds Edge/Chrome)
-├── README.md  START-HERE.txt  LICENSE
+├── README.md  START-HERE.txt  CHANGELOG.md  LICENSE
 ├── samples/                ← .docx, .xlsx, .pptx to test with
-├── css/app.css             ← shared theme (light + dark)
+├── tests/                  ← node --test unit tests + tests/browser/ checks
+├── css/app.css             ← theme (light + dark) and every tool's styles
 ├── css/fonts.css           ← @font-face for the bundled fonts
-├── lib/                    ← vendored libraries, no network at runtime
+├── lib/                    ← vendored libraries (versions: lib/VERSIONS.md)
 │   ├── pdf.min.js + pdf.worker.min.js   ← pdf.js: render existing PDFs
 │   ├── pdf-lib.min.js                   ← manipulate PDFs (merge/split/draw)
 │   ├── jspdf.umd.min.js                 ← export Writer/Impress → PDF
@@ -130,11 +139,16 @@ PocketOffice/
 │   ├── pptxgenjs.min.js                 ← Impress → real .pptx
 │   ├── chart.umd.min.js                 ← charts in Calc
 │   ├── marked.min.js                    ← markdown rendering
+│   ├── purify.min.js                    ← DOMPurify: cleans opened HTML
 │   └── fonts/                           ← Inter, Lora, JetBrains Mono (OFL)
 └── js/                     ← vanilla JS, classic <script> tags, no build step
+    ├── version.js          ← the version number (single source)
+    ├── libs.js             ← loads the big libraries on first use
     ├── app.js              ← shell: tabs, theme, status bar, boot
-    ├── storage.js          ← IndexedDB autosave, File System Access, shared UI
-    │                          + the Fonts lists and the shared Tabs strip
+    ├── storage.js          ← IndexedDB autosave, File System Access, shared UI,
+    │                          sanitizer, undo history, Fonts lists, Tabs strip
+    ├── formula.js          ← Calc's formula engine (pure, unit-tested)
+    ├── docexport.js        ← Writer → .docx / .pdf with formatting
     ├── texteditor.js  word.js  calc.js  impress.js
     ├── pdftools.js  markdown.js
 ```
@@ -144,6 +158,17 @@ no bundler, no ES modules (those break on `file://`). The app code is
 readable and tweakable; add a font by dropping a WOFF2 into `lib/fonts/`,
 declaring it in `css/fonts.css`, and adding the name to the `Fonts` lists
 in `js/storage.js`.
+
+## Tests
+
+```bash
+npm test                  # formula engine + shared helpers (node --test)
+npm run serve             # in one terminal: serves the app on :8765
+npm run test:browser -- "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"
+```
+
+The browser checks drive a headless Edge/Chrome over the DevTools protocol
+with a throwaway profile; no npm packages are needed.
 
 ## Privacy
 
@@ -159,8 +184,8 @@ Want everything inlined into one `.html` for email-friendly distribution?
 
 ```bash
 node _build-single-file.js
-# → produces PocketOffice-standalone.html (~5.5 MB, fonts and the
-#    pdf.js worker embedded as data URLs — truly one file)
+# → produces PocketOffice-standalone.html (~6 MB: every library, the fonts
+#    and the pdf.js worker embedded — truly one file)
 ```
 
 (The build script is tracked in the repo; only the generated `.html` is
@@ -178,6 +203,7 @@ Built with these excellent open-source libraries, all bundled locally:
 | [SheetJS](https://sheetjs.com/) | Apache-2.0 | Spreadsheets |
 | [docx](https://docx.js.org/) | MIT | Word document generation |
 | [mammoth.js](https://github.com/mwilliamson/mammoth.js) | BSD-2-Clause | Reading `.docx` |
+| [DOMPurify](https://github.com/cure53/DOMPurify) | Apache-2.0 / MPL-2.0 | HTML sanitizing |
 | [JSZip](https://stuk.github.io/jszip/) | MIT | Zip handling |
 | [PptxGenJS](https://gitbrent.github.io/PptxGenJS/) | MIT | PowerPoint generation |
 | [Chart.js](https://www.chartjs.org/) | MIT | Calc charts |

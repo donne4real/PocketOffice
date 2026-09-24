@@ -1,0 +1,13 @@
+{
+  "name": "pocketoffice",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Office suite that runs in the browser from a folder — no install, no build step. This file only holds developer scripts; the app has no npm dependencies.",
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test tests/formula.test.js tests/storage.test.js",
+    "serve": "node tests/browser/serve.js . 8765",
+    "test:browser": "node tests/browser/e2e.js",
+    "build": "node _build-single-file.js"
+  }
+}

@@ -155,6 +155,13 @@ const FS = (() => {
     // Try to re-use an existing handle (Ctrl+S on an already-opened file).
     if (handle && handle.createWritable) {
       try {
+        // Handles restored from a previous session start without write
+        // permission; asking here (inside the Save click) shows the prompt.
+        if (handle.queryPermission) {
+          let p = await handle.queryPermission({ mode: 'readwrite' });
+          if (p !== 'granted' && handle.requestPermission) p = await handle.requestPermission({ mode: 'readwrite' });
+          if (p !== 'granted') throw Object.assign(new Error('Permission denied'), { name: 'NotAllowedError' });
+        }
         const w = await handle.createWritable();
         await w.write(bytes);
         await w.close();
@@ -309,6 +316,11 @@ const UI = (() => {
    -------------------------------------------------------------------------- */
 const History = (() => {
   const MAX = 60;
+  // String snapshots (Writer/Text/Markdown) are whole documents, and a
+  // Writer page with a pasted photo is megabytes of base64 per entry. Cap
+  // each key's stacks at roughly this many characters (~50 MB of memory);
+  // the oldest undo steps go first. The newest step is always kept.
+  const MAX_CHARS = 25e6;
   // stacks[key] = { undo: [], redo: [] }
   const stacks = {};
 
@@ -316,15 +328,24 @@ const History = (() => {
     if (!stacks[key]) stacks[key] = { undo: [], redo: [] };
     return stacks[key];
   }
+  const sizeOf = (state) => typeof state === 'string' ? state.length : 0;
+  function trim(s) {
+    let total = 0;
+    for (const e of s.undo) total += e.size;
+    for (const e of s.redo) total += e.size;
+    while (s.undo.length > 1 && (s.undo.length > MAX || total > MAX_CHARS)) {
+      total -= s.undo.shift().size;
+    }
+  }
 
   // Record a pre-mutation snapshot. stateClone must be a deep copy the tool
   // already made; restoreFn(stateClone) applies it back. Returns nothing.
   function snapshot(key, stateClone, restoreFn) {
     const s = ensure(key);
-    s.undo.push({ state: stateClone, restore: restoreFn });
-    if (s.undo.length > MAX) s.undo.shift();
+    s.undo.push({ state: stateClone, restore: restoreFn, size: sizeOf(stateClone) });
     // A new action invalidates the redo branch.
     s.redo.length = 0;
+    trim(s);
   }
 
   function undo(key) {
@@ -337,8 +358,8 @@ const History = (() => {
     // To keep the API simple, we ask the tool for a "current snapshot" callback
     // stored on ensure(). See registerCurrentSnapshot().
     const curSnapshot = s.capture ? s.capture() : null;
-    if (curSnapshot && s.captureRestore) {
-      s.redo.push({ state: curSnapshot, restore: s.captureRestore });
+    if (curSnapshot != null && s.captureRestore) {
+      s.redo.push({ state: curSnapshot, restore: s.captureRestore, size: sizeOf(curSnapshot) });
     }
     entry.restore(entry.state);
     return true;
@@ -349,8 +370,9 @@ const History = (() => {
     if (!s.redo.length) return false;
     const entry = s.redo.pop();
     const curSnapshot = s.capture ? s.capture() : null;
-    if (curSnapshot && s.captureRestore) {
-      s.undo.push({ state: curSnapshot, restore: s.captureRestore });
+    if (curSnapshot != null && s.captureRestore) {
+      s.undo.push({ state: curSnapshot, restore: s.captureRestore, size: sizeOf(curSnapshot) });
+      trim(s);
     }
     entry.restore(entry.state);
     return true;
@@ -396,7 +418,97 @@ const Util = (() => {
   function deepClone(obj) {
     return JSON.parse(JSON.stringify(obj));
   }
-  return { bytesToBase64, deepClone };
+  // Next free number for ids like 'w7', 's3', 'e12'. Restored sessions can
+  // have gaps (w2, w3 after closing w1), so counting the list is not enough —
+  // that handed out 'w3' twice.
+  function nextSeq(ids, prefix) {
+    let max = 0;
+    for (const id of ids) {
+      if (typeof id !== 'string' || !id.startsWith(prefix)) continue;
+      const n = parseInt(id.slice(prefix.length), 10);
+      if (n > max) max = n;
+    }
+    return max + 1;
+  }
+  // A CSS color we are willing to put in markup, or the fallback.
+  function safeColor(c, fallback) {
+    return (typeof c === 'string' && /^#[0-9a-f]{3,8}$/i.test(c.trim())) ? c.trim() : fallback;
+  }
+  function safeNum(n, fallback) {
+    const v = typeof n === 'number' ? n : parseFloat(n);
+    return isFinite(v) ? v : fallback;
+  }
+  // Save a record that may contain FileSystemFileHandles. Browsers that
+  // can't store handles in IndexedDB throw DataCloneError — retry without.
+  async function saveWithHandles(key, value, stripHandles) {
+    try {
+      await Storage.save(key, value);
+    } catch (e) {
+      if (e && e.name === 'DataCloneError') await Storage.save(key, stripHandles(value));
+      else throw e;
+    }
+  }
+  return { bytesToBase64, deepClone, nextSeq, safeColor, safeNum, saveWithHandles };
+})();
+
+/* --------------------------------------------------------------------------
+   Sanitize — the one HTML cleaner for Writer (opened .html/.docx) and the
+   Markdown preview. Uses the vendored DOMPurify (lib/purify.min.js); the
+   hand-rolled fallback only runs if that file is missing.
+   -------------------------------------------------------------------------- */
+const Sanitize = (() => {
+  const FORBID_TAGS = ['style', 'form', 'input', 'button', 'textarea', 'select', 'option', 'iframe', 'object', 'embed', 'link', 'meta', 'base'];
+  let hooked = false;
+
+  function html(dirty, { newTabLinks = false } = {}) {
+    const P = typeof window !== 'undefined' ? window.DOMPurify : null;
+    if (P && P.sanitize) {
+      if (!hooked) {
+        // Opt-in per call: links in the Markdown preview open in a new tab
+        // so a click can't navigate PocketOffice itself away.
+        P.addHook('afterSanitizeAttributes', (node) => {
+          if (Sanitize._newTabLinks && node.tagName === 'A' && node.getAttribute('href')) {
+            node.setAttribute('target', '_blank');
+            node.setAttribute('rel', 'noopener noreferrer');
+          }
+        });
+        hooked = true;
+      }
+      Sanitize._newTabLinks = newTabLinks;
+      try {
+        return P.sanitize(dirty, { FORBID_TAGS, FORBID_ATTR: ['formaction', 'srcdoc'], ADD_ATTR: ['target'] });
+      } finally {
+        Sanitize._newTabLinks = false;
+      }
+    }
+    return fallback(dirty);
+  }
+
+  // Parse inertly (DOMParser never loads images or runs handlers), strip
+  // active content, keep formatting.
+  function fallback(dirty) {
+    const doc = new DOMParser().parseFromString('<body>' + dirty, 'text/html');
+    doc.body.querySelectorAll('script, svg, math, ' + FORBID_TAGS.join(', ')).forEach(n => n.remove());
+    doc.body.querySelectorAll('*').forEach(el => {
+      [...el.attributes].forEach(a => {
+        const v = a.value.replace(/[\s\u0000-\u001f]/g, '').toLowerCase();
+        if (/^on/i.test(a.name) || a.name === 'srcdoc' || a.name === 'formaction') el.removeAttribute(a.name);
+        else if (/^(href|src|xlink:href|action)$/i.test(a.name) &&
+                 (v.startsWith('javascript:') || v.startsWith('vbscript:') ||
+                  (v.startsWith('data:') && !(a.name === 'src' && v.startsWith('data:image/') && !v.startsWith('data:image/svg')))))
+          el.removeAttribute(a.name);
+      });
+    });
+    return doc.body.innerHTML;
+  }
+
+  // Pull the <body> content out of a full HTML document string.
+  function bodyOf(htmlText) {
+    const m = /<body[^>]*>([\s\S]*?)<\/body>/i.exec(htmlText);
+    return m ? m[1] : htmlText;
+  }
+
+  return { html, bodyOf, _newTabLinks: false };
 })();
 
 /* --------------------------------------------------------------------------
@@ -520,19 +632,31 @@ const PdfFonts = (() => {
       } catch (e) { /* skip unreadable font */ }
     }
   }
+  // System fonts can't be embedded, so map them onto the closest of the
+  // PDF standard families instead of always falling back to Helvetica.
+  const SERIF = /times|georgia|cambria|palatino|constantia|garamond|book antiqua|serif$/i;
+  const MONO = /courier|consolas|lucida console|mono/i;
+  function standardFamily(family) {
+    if (family && MONO.test(family)) return 'courier';
+    if (family && SERIF.test(family) && !/sans/i.test(family)) return 'times';
+    return 'helvetica';
+  }
   function pick(family, bold, italic) {
     const want = (bold && italic) ? 'bolditalic' : bold ? 'bold' : italic ? 'italic' : 'normal';
     const ttf = embedded();
     if (!family || !ttf || !FAMILIES.includes(family)) {
-      return { family: 'helvetica', style: want };
+      return { family: standardFamily(family), style: want };
     }
     const has = (st) => !!ttf[family + '|' + st];
     // JetBrains Mono ships without italics — degrade italic to its weights.
     if (has(want)) return { family, style: want };
     if (want === 'bolditalic' && has('bold')) return { family, style: 'bold' };
     if ((want === 'italic' || want === 'bolditalic') && has('normal')) return { family, style: 'normal' };
-    return { family: 'helvetica', style: want };
+    return { family: standardFamily(family), style: want };
   }
   return { register, pick };
 })();
+
+// Node (unit tests) can load the pure helpers from this file.
+if (typeof module !== 'undefined' && module.exports) module.exports = { Util, History };
 

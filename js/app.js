@@ -48,19 +48,21 @@
     const body = document.createElement('div');
     body.style.cssText = 'line-height:1.6;font-size:13px;max-width:460px';
     body.innerHTML = `
-      <p style="margin:0 0 10px"><b>PocketOffice v1.0</b> (built 2026-07-28) — a tiny office suite that runs in your browser,
+      <p style="margin:0 0 10px"><b>PocketOffice v${PO_VERSION.version}</b> (${PO_VERSION.date}) — a tiny office suite that runs in your browser,
       with no install, no admin rights, and no internet.</p>
       <p style="margin:0 0 10px"><b>What's inside</b></p>
       <ul style="margin:0 0 10px; padding-left:22px">
         <li><b>Writer</b> — word processor (.docx/.pdf/.html)</li>
-        <li><b>Calc</b> — spreadsheet with formulas (.xlsx/.csv)</li>
+        <li><b>Calc</b> — spreadsheet with formulas and charts (.xlsx/.csv)</li>
         <li><b>Impress</b> — slides (.pptx/.pdf)</li>
         <li><b>Text Editor</b> — tabbed code/text editor</li>
-        <li><b>PDF Tools</b> — view, merge, split, annotate PDFs</li>
+        <li><b>PDF Tools</b> — view, merge, split, annotate, sign PDFs</li>
+        <li><b>Markdown</b> — live-preview editor, print and HTML export</li>
       </ul>
       <p class="muted" style="margin:0">All documents autosave to your browser's storage.
       Use the toolbar buttons to open and save real files.</p>
-      <p class="muted" style="margin:8px 0 0">Built with pdf.js, pdf-lib, jsPDF, SheetJS, docx, and PptxGenJS (all bundled locally).</p>
+      <p class="muted" style="margin:8px 0 0">Built with pdf.js, pdf-lib, jsPDF, SheetJS, docx, mammoth, PptxGenJS,
+      Chart.js, marked and DOMPurify (all bundled locally — see lib/VERSIONS.md).</p>
     `;
     UI.dialog({ title: 'About PocketOffice', body, okText: 'Close', cancelText: null });
     // hide the cancel button if present
@@ -73,7 +75,15 @@
   // keys are per-document ('writer:w2', …), so only the tool knows its
   // active key. Text Editor is the same (per-buffer keys).
   function toolFor(app) {
-    return { writer: Writer, calc: Calc, impress: Impress, text: TextEditor, markdown: MarkdownReader }[app];
+    return { writer: Writer, calc: Calc, impress: Impress, text: TextEditor, pdf: PdfTools, markdown: MarkdownReader }[app];
+  }
+
+  // Autosaves wait 800 ms after the last change. When the page is hidden or
+  // closed, write whatever is pending straight away so nothing is lost.
+  function flushAll() {
+    for (const tool of [Writer, Calc, Impress, TextEditor, MarkdownReader]) {
+      try { if (tool && typeof tool.flush === 'function') tool.flush(); } catch (e) { /* keep going */ }
+    }
   }
   function doUndoRedo(which) {
     const tool = toolFor(currentApp);
@@ -137,6 +147,13 @@
     document.getElementById('aboutBtn').addEventListener('click', showAbout);
 
     wireShortcuts();
+    window.addEventListener('pagehide', flushAll);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') flushAll();
+    });
+
+    const ver = document.getElementById('statusVersion');
+    if (ver) ver.textContent = `v${PO_VERSION.version} · ${PO_VERSION.date}`;
 
     // boot tools (each is independent)
     try { await TextEditor.boot(); } catch (e) { console.error('TextEditor boot:', e); }

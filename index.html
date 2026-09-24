@@ -149,28 +149,26 @@
       <span id="statusInfo"></span>
       <span class="spacer"></span>
       <span id="statusAutosave" class="muted"></span>
-      <span class="muted">v1.4.0 · 2026-09-05 · reopen tab · reorder tabs · PDF font embedding</span>
+      <span class="muted" id="statusVersion"></span>
     </footer>
   </div>
 
   <div id="toasts"></div>
   <div id="dialogRoot"></div>
 
-  <!-- ====================== VENDORED LIBRARIES (all offline) ====================== -->
-  <script src="lib/pdf.min.js"></script>
-  <script src="lib/pdf-lib.min.js"></script>
-  <script src="lib/jspdf.umd.min.js"></script>
-  <script src="lib/xlsx.full.min.js"></script>
-  <script src="lib/docx.umd.js"></script>
-  <script src="lib/mammoth.browser.js"></script>   <!-- reads existing .docx -->
-  <script src="lib/jszip.min.js"></script>     <!-- required by pptxgenjs -->
-  <script src="lib/pptxgenjs.min.js"></script>
-  <script src="lib/chart.umd.min.js"></script>  <!-- charts in Calc -->
+  <!-- ====================== VENDORED LIBRARIES (all offline) ======================
+       Only the small, always-needed libraries load at startup. The big ones
+       (pdf.js, pdf-lib, jsPDF, SheetJS, docx, mammoth, JSZip, PptxGenJS,
+       Chart.js) are loaded by js/libs.js the first time a tool needs them. -->
   <script src="lib/marked.min.js"></script>     <!-- markdown rendering -->
-  <script src="lib/embedded-fonts.js"></script> <!-- TTFs for jsPDF export (generated) -->
+  <script src="lib/purify.min.js"></script>     <!-- DOMPurify: HTML sanitizer -->
 
   <!-- ====================== APP CODE ====================== -->
+  <script src="js/version.js"></script>
+  <script src="js/libs.js"></script>
   <script src="js/storage.js"></script>
+  <script src="js/formula.js"></script>
+  <script src="js/docexport.js"></script>
   <script src="js/texteditor.js"></script>
   <script src="js/word.js"></script>
   <script src="js/calc.js"></script>

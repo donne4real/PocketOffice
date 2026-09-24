@@ -3,8 +3,23 @@
 const fs = require('fs');
 const path = require('path');
 const ROOT = __dirname;
-const VERSION = 'v1.4.0';
+
+// Single source of truth for the version: js/version.js.
+const verSrc = fs.readFileSync(path.join(ROOT, 'js', 'version.js'), 'utf8');
+const VERSION = 'v' + (/version:\s*'([^']+)'/.exec(verSrc) || [])[1];
+
+// index.html loads the big libraries on demand through js/libs.js. A single
+// file can't fetch siblings, so inline every library listed in the Libs
+// manifest up front; Libs.need() then finds them ready and resolves at once.
+const libsSrc = fs.readFileSync(path.join(ROOT, 'js', 'libs.js'), 'utf8');
+const lazyLibs = [...new Set(libsSrc.match(/'lib\/[^']+\.js'/g).map(s => s.slice(1, -1)))];
+
 const srcHtml = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+
+// Inlined code must not contain a literal "</script" or the HTML parser
+// ends the <script> element early. "<\/script" means the same thing in JS.
+const safeJs = (code) => code.replace(/<\/script/gi, '<\\/script');
+
 function inlineCss(html) {
   return html.replace(/<link[^>]*href="([^"]+\.css)"[^>]*>/g, (m, href) => {
     const p = path.join(ROOT, href);
@@ -12,24 +27,26 @@ function inlineCss(html) {
     return '<style>\n' + fs.readFileSync(p, 'utf8') + '\n</style>';
   });
 }
+
 function inlineScripts(html) {
-  const workerPath = path.join(ROOT, 'lib', 'pdf.worker.min.js');
-  const workerCode = fs.readFileSync(workerPath, 'utf8');
-  // pdf.js worker can't be inlined as a plain script; load it from a Blob URL.
-  // The shim must run AFTER pdftools.js (which sets workerSrc to the relative
-  // lib/ path) so the blob URL wins. Marker goes in before inlining so it
-  // targets the raw script tag; inlining preserves it.
-  const workerShim = '<script>\n(function(){try{var s=' + JSON.stringify(workerCode) + ';var b=new Blob([s],{type:"application/javascript"});var u=URL.createObjectURL(b);if(window.pdfjsLib){pdfjsLib.workerSrc=u;if(pdfjsLib.GlobalWorkerOptions)pdfjsLib.GlobalWorkerOptions.workerSrc=u;}}catch(e){console.warn(e);}})();\n</script>';
-  html = html.replace('<script src="js/pdftools.js"></script>', '<script src="js/pdftools.js"></script>\n__SHIM__');
-  let out = html.replace(/<script\s+src="([^"]+)"[^>]*><\/script>/g, (m, src) => {
-    if (/pdf\.worker\.min\.js/.test(src)) return '';
+  const marker = '<script src="js/version.js"></script>';
+  if (!html.includes(marker)) throw new Error('index.html: version.js script tag not found');
+  const workerCode = fs.readFileSync(path.join(ROOT, 'lib', 'pdf.worker.min.js'), 'utf8');
+  // pdf.js can't load its worker from a sibling file here; hand it a Blob URL.
+  // pdftools.js reads window.PO_PDF_WORKER_SRC when it first opens a PDF.
+  const workerShim = '<script>\n(function(){try{var b=new Blob([' + safeJs(JSON.stringify(workerCode)) +
+    '],{type:"application/javascript"});window.PO_PDF_WORKER_SRC=URL.createObjectURL(b);}catch(e){console.warn(e);}})();\n</script>';
+  const eager = lazyLibs.map(src => `<script src="${src}"></script>`).join('\n') + '\n' + workerShim + '\n';
+  // Function form: the worker source contains "$&"-style sequences that a
+  // plain replacement string would expand.
+  html = html.replace(marker, () => eager + marker);
+  return html.replace(/<script\s+src="([^"]+)"[^>]*><\/script>/g, (m, src) => {
     const p = path.join(ROOT, src);
-    if (!fs.existsSync(p)) return m;
-    return '<script>\n' + fs.readFileSync(p, 'utf8') + '\n</script>';
+    if (!fs.existsSync(p)) throw new Error('Missing script ' + src);
+    return '<script>\n' + safeJs(fs.readFileSync(p, 'utf8')) + '\n</script>';
   });
-  out = out.replace('__SHIM__', workerShim);
-  return out;
 }
+
 // Inlined CSS lives at the document root, so url('../lib/fonts/x.woff2')
 // would break — swap every woff2 reference for a base64 data URL.
 function inlineFonts(html) {
@@ -39,10 +56,11 @@ function inlineFonts(html) {
     return 'url(data:font/woff2;base64,' + fs.readFileSync(p).toString('base64') + ')';
   });
 }
+
 let html = inlineCss(srcHtml);
 html = inlineScripts(html);
 html = inlineFonts(html);
 const out = '<!-- PocketOffice ' + VERSION + ' standalone build -->\n' + html;
 const outFile = path.join(ROOT, 'PocketOffice-standalone.html');
 fs.writeFileSync(outFile, out);
-console.log('Wrote ' + outFile + ' (' + (fs.statSync(outFile).size / 1048576).toFixed(2) + ' MB)');
+console.log('Wrote ' + outFile + ' (' + (fs.statSync(outFile).size / 1048576).toFixed(2) + ' MB, ' + VERSION + ')');

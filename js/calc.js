@@ -1,8 +1,8 @@
 /* ==========================================================================
-   calc.js — Calc: a spreadsheet with a hand-written formula engine.
-   Features: 1000x100 grid, click-to-edit, formula recalc, ranges,
-     SUM/AVERAGE/MIN/MAX/COUNT/IF/ROUND/ABS/INT/AND/OR/NOT/CONCAT/UPPER/LOWER/LEN
-     .xlsx + .csv import/export (SheetJS), autosave, fill-down, keyboard nav.
+   calc.js — Calc: the spreadsheet UI. The formula engine itself lives in
+   formula.js (pure, unit-tested). Features: 1000x100 grid built lazily as
+   you scroll, click-to-edit, charts, multi-sheet .xlsx + .csv import/export
+   (SheetJS, loaded on demand), autosave, fill-down, keyboard nav.
    ========================================================================== */
 
 const Calc = (() => {
@@ -18,7 +18,6 @@ const Calc = (() => {
   let tabs = null;
   // cell key = "A1" etc.  data[key] = { raw: string typed, value: computed }
   let data = Object.create(null);
-  // Dependencies for incremental recalc (kept simple): we just re-eval all formulas.
   let activeCell = 'A1';
   let editingCell = null;
   let switchingSheet = false;   // suppresses the fx blur-commit during a sheet switch
@@ -33,418 +32,31 @@ const Calc = (() => {
     return Object.keys(s.data).length > 0 || (s.charts && s.charts.length > 0);
   }
 
-  // ---------- Address helpers ----------
-  function colName(idx) {   // 0 -> A, 25 -> Z, 26 -> AA
-    let s = '';
-    idx = +idx;
-    do { s = String.fromCharCode(65 + (idx % 26)) + s; idx = Math.floor(idx / 26) - 1; } while (idx >= 0);
-    return s;
-  }
-  function colIndex(name) {
-    let n = 0;
-    for (let i = 0; i < name.length; i++) n = n * 26 + (name.charCodeAt(i) - 64);
-    return n - 1;
-  }
-  function keyOf(col, row) { return colName(col) + (row + 1); }
-  function parseAddr(s) {
-    const m = /^([A-Za-z]+)(\d+)$/.exec(s);
-    if (!m) return null;
-    return { col: colIndex(m[1].toUpperCase()), row: +m[2] - 1 };
-  }
+  // ---------- Formula engine (js/formula.js) ----------
+  const { colName, colIndex, keyOf, parseAddr, formatNumber } = Formula;
 
-  // ---------- Formula engine ----------
-  // Tokenizer for expressions inside =...
-  const TOKEN_RE = /(\s+)|(\d+\.\d+|\d+)|([A-Za-z_][A-Za-z0-9_\.]*)|(<=|>=|<>|!=|[:+\-*/^(),&<>=])|"((?:[^"\\]|\\.)*)"|('([^']*)')/g;
-
-  function tokenize(expr) {
-    const toks = [];
-    let m;
-    TOKEN_RE.lastIndex = 0;
-    while ((m = TOKEN_RE.exec(expr))) {
-      if (m[1]) continue;                                  // whitespace
-      if (m[2] !== undefined) toks.push({ t: 'num', v: parseFloat(m[2]) });
-      else if (m[3] !== undefined) {
-        const s = m[3];
-        // Could be a function name, a cell ref (A1), or a range (A1:B2)
-        toks.push({ t: 'name', v: s });
-      } else if (m[4] !== undefined) toks.push({ t: 'op', v: m[4] });
-      else if (m[5] !== undefined) toks.push({ t: 'str', v: m[5].replace(/\\"/g, '"').replace(/\\\\/g, '\\') }); // double-quoted content
-      else if (m[6] !== undefined) toks.push({ t: 'str', v: m[6] }); // single-quoted content
-    }
-    return toks;
-  }
-
-  // Recursive-descent parser producing a small AST, then evaluator.
-  // Grammar (precedence low→high):
-  //   comparison := additive ( (=|<>|<=|>=|<|>) additive )*
-  //   additive   := multiplicative ( (+|-) multiplicative )*
-  //   multiplicative := power ( (*|/|&) power )*
-  //   power      := unary ( ^ unary )*
-  //   unary      := (-|+) unary | postfix
-  //   postfix    := primary ( ':' primary )*   // range
-  //   primary    := number | string | name ( '(' args ')' )? | '(' comparison ')'
-
-  let _tok, _pos;
-  function peek() { return _tok[_pos]; }
-  function next() { return _tok[_pos++]; }
-  function expectOp(op) {
-    const t = peek();
-    if (!t || t.t !== 'op' || t.v !== op) throw new Error('expected ' + op);
-    _pos++;
-  }
-
-  function parseExpr() { return parseComparison(); }
-  function parseComparison() {
-    let left = parseAdditive();
-    while (peek() && peek().t === 'op' && ['=','<>','!=','<','>','<=','>='].includes(peek().v)) {
-      const op = next().v;
-      const right = parseAdditive();
-      left = { t: 'binop', op, left, right };
-    }
-    return left;
-  }
-  function parseAdditive() {
-    let left = parseMultiplicative();
-    while (peek() && peek().t === 'op' && (peek().v === '+' || peek().v === '-')) {
-      const op = next().v;
-      const right = parseMultiplicative();
-      left = { t: 'binop', op, left, right };
-    }
-    return left;
-  }
-  function parseMultiplicative() {
-    let left = parsePower();
-    while (peek() && peek().t === 'op' && (peek().v === '*' || peek().v === '/' || peek().v === '&')) {
-      const op = next().v;
-      const right = parsePower();
-      left = { t: 'binop', op, left, right };
-    }
-    return left;
-  }
-  function parsePower() {
-    let left = parseUnary();
-    while (peek() && peek().t === 'op' && peek().v === '^') {
-      next();
-      const right = parseUnary();
-      left = { t: 'binop', op: '^', left, right };
-    }
-    return left;
-  }
-  function parseUnary() {
-    if (peek() && peek().t === 'op' && (peek().v === '-' || peek().v === '+')) {
-      const op = next().v;
-      const operand = parseUnary();
-      return { t: 'unary', op, operand };
-    }
-    return parseRange();
-  }
-  function parseRange() {
-    let left = parsePrimary();
-    while (peek() && peek().t === 'op' && peek().v === ':') {
-      next();
-      const right = parsePrimary();
-      left = { t: 'range', left, right };
-    }
-    return left;
-  }
-  function parsePrimary() {
-    const t = next();
-    if (!t) throw new Error('unexpected end');
-    if (t.t === 'num') return { t: 'num', v: t.v };
-    if (t.t === 'str') return { t: 'str', v: t.v };
-    if (t.t === 'op' && t.v === '(') {
-      const e = parseExpr();
-      expectOp(')');
-      return e;
-    }
-    if (t.t === 'name') {
-      // function call?
-      if (peek() && peek().t === 'op' && peek().v === '(') {
-        next();
-        const args = [];
-        if (!(peek() && peek().t === 'op' && peek().v === ')')) {
-          args.push(parseExpr());
-          while (peek() && peek().t === 'op' && peek().v === ',') { next(); args.push(parseExpr()); }
-        }
-        expectOp(')');
-        return { t: 'call', name: t.v.toUpperCase(), args };
-      }
-      // bare name — cell ref or named constant
-      return { t: 'name', v: t.v };
-    }
-    throw new Error('unexpected token ' + (t.v || t.t));
-  }
-
-  // ---------- Function library ----------
-  const FUNCS = {
-    SUM: (...a) => flattenNums(a).reduce((x, y) => x + y, 0),
-    AVERAGE: (...a) => { const n = flattenNums(a); return n.length ? n.reduce((x, y) => x + y, 0) / n.length : 0; },
-    PRODUCT:(...a) => flattenNums(a).reduce((x, y) => x * y, 1),
-    MIN: (...a) => { const n = flattenNums(a); return n.length ? Math.min(...n) : 0; },
-    MAX: (...a) => { const n = flattenNums(a); return n.length ? Math.max(...n) : 0; },
-    COUNT: (...a) => flattenNums(a).length,
-    COUNTA:(...a) => flatten(a).filter(x => x !== '' && x != null).length,
-    ABS: (x) => Math.abs(x),
-    INT: (x) => Math.floor(x),
-    ROUND: (x, d = 0) => { const p = Math.pow(10, d); return Math.round(x * p) / p; },
-    ROUNDUP:(x, d=0) => { const p = Math.pow(10, d); return (x<0?-1:1)*Math.ceil(Math.abs(x)*p)/p; },
-    ROUNDDOWN:(x,d=0) => { const p = Math.pow(10, d); return (x<0?-1:1)*Math.floor(Math.abs(x)*p)/p; },
-    SQRT: (x) => Math.sqrt(x),
-    POWER:(x, y) => Math.pow(x, y),
-    MOD: (x, y) => x - y * Math.floor(x / y),
-    PI: () => Math.PI,
-    SIN: (x) => Math.sin(x), COS: (x) => Math.cos(x), TAN: (x) => Math.tan(x),
-    ASIN:(x)=>Math.asin(x), ACOS:(x)=>Math.acos(x), ATAN:(x)=>Math.atan(x),
-    ATAN2:(y,x)=>Math.atan2(y,x),
-    EXP:(x)=>Math.exp(x), LN:(x)=>Math.log(x), LOG10:(x)=>Math.log10(x),
-    LOG:(x,b=10)=>Math.log(x)/Math.log(b),
-    IF: (cond, t, f) => truthy(cond) ? t : f,
-    IFERROR:(v, fb) => (v instanceof Error) ? fb : v,
-    AND: (...a) => flatten(a).every(truthy),
-    OR: (...a) => flatten(a).some(truthy),
-    NOT: (x) => !truthy(x),
-    TRUE: () => true, FALSE: () => false,
-    CONCAT: (...a) => flatten(a).map(x => x == null ? '' : '' + x).join(''),
-    CONCATENATE:(...a)=>FUNCS.CONCAT(...a),
-    LEN: (x) => ('' + (x ?? '')).length,
-    UPPER: (x) => ('' + (x ?? '')).toUpperCase(),
-    LOWER: (x) => ('' + (x ?? '')).toLowerCase(),
-    TRIM: (x) => ('' + (x ?? '')).replace(/^ +| +$/g, '').replace(/ +/g, ' '),
-    LEFT: (x, n = 1) => ('' + (x ?? '')).slice(0, n),
-    RIGHT: (x, n = 1) => ('' + (x ?? '')).slice(-n),
-    MID: (x, s, n) => ('' + (x ?? '')).substr(s - 1, n),
-    REPLACE:(o,s,n,r)=>(''+o).slice(0,s-1)+r+(''+o).slice(s-1+n),
-    SUBSTITUTE:(t,a,b)=>(''+t).split(a).join(b),
-    TEXT:(x,fmt)=>''+x,
-    VALUE:(x)=>{const n=parseFloat(x);return isNaN(n)?0:n;},
-    NOW: () => Date.now()/86400000 + 25569,  // Excel serial
-    TODAY: () => Math.floor(Date.now()/86400000 + 25569),
-    YEAR:(s)=>new Date((s-25569)*86400000).getFullYear(),
-    MONTH:(s)=>new Date((s-25569)*86400000).getMonth()+1,
-    DAY:(s)=>new Date((s-25569)*86400000).getDate(),
-    ISBLANK:(x)=>x===''||x==null,
-    ISNUMBER:(x)=>typeof x==='number',
-    ISTEXT:(x)=>typeof x==='string',
-    ISERROR:(x)=>x instanceof Error,
-    ROW:(...a)=>{ return a.length?0:0; }, // placeholder, ROW() really wants a ref
-    MEDIAN:(...a)=>{const n=flattenNums(a).sort((x,y)=>x-y);const m=Math.floor(n.length/2);return n.length%2?n[m]:(n[m-1]+n[m])/2;},
-    VLOOKUP:(value, range, colIndex, exact)=>{
-      // range is a 2D array (rows of values). Search the first column for `value`;
-      // return the value from column `colIndex` (1-based) of the matching row.
-      // 4th arg (range_lookup): TRUE/omitted = approximate, FALSE/0 = exact.
-      const rows = Array.isArray(range) ? range : [range];
-      const approx = exact === undefined ? true : truthy(exact);
-      let best = null;
-      for (const r of rows) {
-        const first = Array.isArray(r) ? r[0] : r;
-        if (looseEq(first, value)) return (Array.isArray(r) ? r[+colIndex - 1] : r);
-        if (approx && typeof first === 'number' && typeof value === 'number' && first <= value) {
-          if (!best || first > best[0]) best = [first, Array.isArray(r) ? r[+colIndex - 1] : r];
-        }
-      }
-      if (approx && best) return best[1];
-      throw error('#N/A');
-    },
-    HLOOKUP:(value, range, rowIndex, exact)=>{
-      const rows = Array.isArray(range) ? range : [range];
-      if (!rows.length) throw error('#N/A');
-      const cols = Array.isArray(rows[0]) ? rows[0] : [rows[0]];
-      const approx = exact === undefined ? true : truthy(exact);
-      let bestCol = -1;
-      for (let c = 0; c < cols.length; c++) {
-        const v = cols[c];
-        if (looseEq(v, value)) { bestCol = c; break; }
-        if (approx && typeof v === 'number' && typeof value === 'number' && v <= value) bestCol = c;
-      }
-      if (bestCol < 0) throw error('#N/A');
-      const row = rows[+rowIndex - 1];
-      return Array.isArray(row) ? row[bestCol] : row;
-    },
-    INDEX:(range, row, col)=>{
-      const rows = Array.isArray(range) ? range : [range];
-      const r = (+row || 1) - 1, c = (+col || 1) - 1;
-      const target = rows[r];
-      if (!Array.isArray(target)) return target;
-      return target[c];
-    },
-    MATCH:(value, range, type)=>{
-      const flat = flatten(Array.isArray(range) ? range : [range]);
-      const t = type === undefined ? 1 : +type;
-      if (t === 0) { for (let i=0;i<flat.length;i++) if (looseEq(flat[i], value)) return i+1; throw error('#N/A'); }
-      if (t === 1) { let last=0; for (let i=0;i<flat.length;i++) if (typeof flat[i]==='number' && flat[i]<=value) last=i+1; else break; if (!last) throw error('#N/A'); return last; }
-      // t === -1
-      let last=0; for (let i=0;i<flat.length;i++) if (typeof flat[i]==='number' && flat[i]>=value) last=i+1; else break; if (!last) throw error('#N/A'); return last;
-    },
-    RANK:(value, range, order)=>{
-      const n = flattenNums(Array.isArray(range)?range:[range]);
-      const asc = order && truthy(order);
-      const sorted = [...n].sort((a,b)=>asc?a-b:b-a);
-      const idx = sorted.indexOf(value);
-      if (idx < 0) throw error('#N/A');
-      return idx + 1;
-    },
-    RANDBETWEEN:(lo,hi)=>Math.floor(Math.random()*(+hi-+lo+1))+ +lo,
-    STDEV:(...a)=>{const n=flattenNums(a);if(n.length<2)return 0;const m=n.reduce((x,y)=>x+y,0)/n.length;const v=n.reduce((x,y)=>x+(y-m)**2,0)/(n.length-1);return Math.sqrt(v);},
-    VAR:(...a)=>{const n=flattenNums(a);if(n.length<2)return 0;const m=n.reduce((x,y)=>x+y,0)/n.length;return n.reduce((x,y)=>x+(y-m)**2,0)/(n.length-1);},
-  };
-
-  function flatten(args) {
-    // Flatten ranges (arrays) and scalar args into one array.
-    const out = [];
-    for (const a of args) {
-      if (Array.isArray(a)) out.push(...a.flat());
-      else out.push(a);
-    }
-    return out;
-  }
-  function flattenNums(args) {
-    return flatten(args).map(x => {
-      if (typeof x === 'number') return x;
-      if (typeof x === 'string' && x.trim() !== '' && !isNaN(x)) return parseFloat(x);
-      return NaN;
-    }).filter(x => !isNaN(x));
-  }
-  function truthy(v) {
-    if (typeof v === 'number') return v !== 0;
-    if (typeof v === 'boolean') return v;
-    if (typeof v === 'string') {
-      const s = v.trim().toLowerCase();
-      if (s === 'false' || s === '' || s === '0') return false;
-      return true;
-    }
-    return !!v;
-  }
-
-  // ---------- Evaluator ----------
-  const ERRORS = new Set(['#REF!','#NAME?','#DIV/0!','#VALUE!','#NUM!','#N/A','#NULL!']);
-  function error(kind) { return new Error(kind); }
-
-  function evalNode(node, ctx) {
-    switch (node.t) {
-      case 'num': return node.v;
-      case 'str': return node.v;
-      case 'name': {
-        // Bare name: maybe a cell ref (A1) or a named constant (TRUE/FALSE/PI...).
-        const up = node.v.toUpperCase();
-        if (up === 'TRUE') return true;
-        if (up === 'FALSE') return false;
-        if (/^[A-Z]+\d+$/.test(up)) {
-          return readCellValue(ctx, up);
-        }
-        throw error('#NAME?');
-      }
-      case 'unary': {
-        const v = evalNode(node.operand, ctx);
-        if (node.op === '-') return -v;
-        return +v;
-      }
-      case 'range': {
-        // produce a 2D array of values between the two corners
-        const a = resolveRef(node.left), b = resolveRef(node.right);
-        const c1 = Math.min(a.col, b.col), c2 = Math.max(a.col, b.col);
-        const r1 = Math.min(a.row, b.row), r2 = Math.max(a.row, b.row);
-        const out = [];
-        for (let r = r1; r <= r2; r++) {
-          const row = [];
-          for (let c = c1; c <= c2; c++) row.push(readCellValue(ctx, keyOf(c, r)));
-          out.push(row);
-        }
-        return out; // array of arrays
-      }
-      case 'binop': {
-        const l = evalNode(node.left, ctx);
-        const r = evalNode(node.right, ctx);
-        switch (node.op) {
-          case '+': return (+l) + (+r);
-          case '-': return (+l) - (+r);
-          case '*': return (+l) * (+r);
-          case '/': if ((+r) === 0) throw error('#DIV/0!'); return (+l) / (+r);
-          case '^': return Math.pow(+l, +r);
-          case '&': return '' + (l ?? '') + (r ?? '');
-          case '=':  return looseEq(l, r);
-          case '<>': case '!=': return !looseEq(l, r);
-          case '<':  return +l < +r;
-          case '>':  return +l > +r;
-          case '<=': return +l <= +r;
-          case '>=': return +l >= +r;
-        }
-        throw error('#VALUE!');
-      }
-      case 'call': {
-        const fn = FUNCS[node.name];
-        if (!fn) throw error('#NAME?');
-        const args = node.args.map(a => evalNode(a, ctx));
-        return fn(...args);
-      }
-    }
-  }
-  function looseEq(a, b) {
-    if (typeof a === 'number' && typeof b === 'number') return a === b;
-    return ('' + a) === ('' + b);
-  }
-  function resolveRef(node) {
-    if (node.t === 'name' && /^[A-Za-z]+\d+$/.test(node.v)) return parseAddr(node.v);
-    throw error('#REF!');
-  }
-
-  // ctx.active is the cell currently being computed (for cycle detection)
-  function readCellValue(ctx, addr) {
-    if (ctx.stack.has(addr)) throw error('#CYCLE!');
-    const cell = data[addr];
-    if (!cell) return '';
-    // If we're recomputing a different cell, ensure this one is fresh.
-    if (addr !== ctx.root && cell.raw && cell.raw[0] === '=' && !cell._fresh) {
-      ctx.stack.add(addr);
-      try {
-        cell.value = evaluateRaw(cell.raw, addr, ctx);
-      } catch (e) { cell.value = e.message && ERRORS.has(e.message) ? e.message : '#ERROR!'; }
-      ctx.stack.delete(addr);
-      cell._fresh = true;
-    }
-    const v = cell.value;
-    if (v instanceof Error || (typeof v === 'string' && ERRORS.has(v))) return v;
-    return v;
-  }
-
-  function evaluateRaw(raw, rootAddr, ctx) {
-    const expr = raw.slice(1); // drop '='
-    const toks = tokenize(expr);
-    _tok = toks; _pos = 0;
-    const ast = parseExpr();
-    const c = ctx || { root: rootAddr, stack: new Set([rootAddr]) };
-    c.root = rootAddr;
-    c.stack = c.stack || new Set([rootAddr]);
-    return evalNode(ast, c);
-  }
-
-  // Recompute all formula cells. Two passes; the second handles dependencies
-  // that resolved to errors only because their inputs weren't fresh yet.
+  // Recompute every formula on the active sheet in one memoized pass.
   function recalcAll() {
-    const ctx = { root: null, stack: new Set() };
-    for (const addr of Object.keys(data)) data[addr]._fresh = false;
-    for (let pass = 0; pass < 3; pass++) {
-      for (const addr of Object.keys(data)) {
-        const cell = data[addr];
-        if (!cell.raw || cell.raw[0] !== '=') {
-          // raw literal
-          cell.value = parseLiteral(cell.raw);
-          continue;
-        }
-        if (cell._fresh) continue;
-        ctx.root = addr; ctx.stack = new Set([addr]);
-        try {
-          cell.value = evaluateRaw(cell.raw, addr, ctx);
-        } catch (e) {
-          cell.value = (e && ERRORS.has(e.message)) ? e.message : '#ERROR!';
-        }
-        cell._fresh = true;
-      }
-    }
-    // Refresh any charts whose data may have changed.
+    Formula.recalcSheet(data, resolverFor(activeSheet()));
     if (charts.length) refreshChartData();
+  }
+  // Sheet names in formulas ('Sheet 2'!A1, Data!B3). A name first matches a
+  // sibling imported from the same workbook, then any open tab of that name.
+  function resolverFor(sheet) {
+    return (name) => {
+      const want = String(name).toLowerCase();
+      const cellsOf = (s) => s.id === activeSheetId ? data : s.data;
+      if (sheet && sheet.book) {
+        const sib = sheets.find(s => s.book === sheet.book && (s.sheetName || '').toLowerCase() === want);
+        if (sib) return cellsOf(sib);
+      }
+      const hit = sheets.find(s => s.name.toLowerCase() === want || (s.sheetName || '').toLowerCase() === want);
+      return hit ? cellsOf(hit) : null;
+    };
   }
   // Re-render chart data without rebuilding the panels (keeps position).
   function refreshChartData() {
+    if (!Libs.isReady('chart')) return;
     for (const chart of charts) {
       const layer = $('calcChartLayer');
       const panel = layer && layer.querySelector(`.calc-chart-panel[data-id="${chart.id}"]`);
@@ -454,19 +66,18 @@ const Calc = (() => {
       }
     }
   }
-  function parseLiteral(s) {
-    if (s === '' || s == null) return '';
-    const n = parseFloat(s);
-    if (!isNaN(n) && /^[\s\d.,eE+-]+$/.test(s)) return n;
-    if (s.toLowerCase() === 'true') return true;
-    if (s.toLowerCase() === 'false') return false;
-    return s;
-  }
 
   // ---------- DOM grid ----------
+  const ROW_CHUNK = 100;
+  let renderedRows = 0;
+  let gridBody = null;
+  const cellEls = new Map();    // address -> cell element (rendered rows only)
+  let activeEl = null;
+
   function buildGrid() {
     const wrap = $('calcContent');
     wrap.innerHTML = '';
+    document.documentElement.style.setProperty('--calc-cols', COLS);
     // Top-left corner + column header row
     const corner = document.createElement('div');
     corner.className = 'calc-corner';
@@ -480,32 +91,21 @@ const Calc = (() => {
     colHeader.innerHTML = chHtml;
     wrap.appendChild(colHeader);
 
-    // Row gutter + cells
+    // Row gutter + cells. Rows are created in chunks as the user scrolls
+    // down (v1 built all 100,000 cells at startup).
     const scrollBody = document.createElement('div');
     scrollBody.className = 'calc-body';
-    for (let r = 0; r < ROWS; r++) {
-      const rowHead = document.createElement('div');
-      rowHead.className = 'calc-rowhead';
-      rowHead.textContent = r + 1;
-      scrollBody.appendChild(rowHead);
-      for (let c = 0; c < COLS; c++) {
-        const cell = document.createElement('div');
-        cell.className = 'calc-cell';
-        cell.dataset.addr = keyOf(c, r);
-        cell.tabIndex = -1;
-        scrollBody.appendChild(cell);
-      }
-    }
     wrap.appendChild(scrollBody);
+    gridBody = scrollBody;
+    ensureRows(ROW_CHUNK);
 
     // Click + double-click + keyboard handlers
     scrollBody.addEventListener('click', onCellClick);
     scrollBody.addEventListener('dblclick', onCellDblClick);
     scrollBody.addEventListener('keydown', onCellKey);
-    // Sync scroll for sticky headers
-    scrollBody.addEventListener('scroll', () => {
-      colHeader.scrollLeft = scrollBody.scrollLeft;
-      // row headers sticky via CSS position; we just translate
+    // Grow the grid when the user nears the bottom.
+    wrap.addEventListener('scroll', () => {
+      if (wrap.scrollTop + wrap.clientHeight > wrap.scrollHeight - 600) ensureRows(renderedRows + ROW_CHUNK);
     });
 
     // Floating chart overlay layer (sits above the grid, scrolls with content).
@@ -515,6 +115,35 @@ const Calc = (() => {
     wrap.appendChild(chartLayer);
 
     return scrollBody;
+  }
+
+  // Make sure rows 0..n-1 exist in the DOM, painting any data they hold.
+  function ensureRows(n) {
+    n = Math.min(ROWS, n);
+    if (!gridBody || n <= renderedRows) return;
+    const from = renderedRows;
+    const frag = document.createDocumentFragment();
+    for (let r = from; r < n; r++) {
+      const rowHead = document.createElement('div');
+      rowHead.className = 'calc-rowhead';
+      rowHead.textContent = r + 1;
+      frag.appendChild(rowHead);
+      for (let c = 0; c < COLS; c++) {
+        const cell = document.createElement('div');
+        const addr = keyOf(c, r);
+        cell.className = 'calc-cell';
+        cell.dataset.addr = addr;
+        cell.tabIndex = -1;
+        cellEls.set(addr, cell);
+        frag.appendChild(cell);
+      }
+    }
+    gridBody.appendChild(frag);
+    renderedRows = n;
+    for (const addr of Object.keys(data)) {
+      const a = parseAddr(addr);
+      if (a && a.row >= from && a.row < n) renderCell(addr);
+    }
   }
 
   // ---------- Charts ----------
@@ -591,7 +220,7 @@ const Calc = (() => {
       for (let c = rng.c1; c <= rng.c2; c++) {
         const cell = data[keyOf(c, r)];
         let v = cell ? cell.value : '';
-        if (v instanceof Error) v = 0;
+        if (Formula.isErr(v)) v = 0;
         row.push(v);
       }
       rows.push(row);
@@ -629,6 +258,11 @@ const Calc = (() => {
   function renderCharts() {
     const layer = $('calcChartLayer');
     if (!layer) return;
+    if (charts.length && !Libs.isReady('chart')) {
+      // Chart.js loads on first use; draw once it's here.
+      Libs.need('chart').then(renderCharts).catch(e => UI.toast(e.message, 'error'));
+      return;
+    }
     // Remove panels that no longer exist; rebuild the rest.
     layer.innerHTML = '';
     for (const chart of charts) {
@@ -691,11 +325,19 @@ const Calc = (() => {
     const head = panel.querySelector('.calc-chart-head');
     const layer = $('calcChartLayer');
     let drag = null;
+    // Document-level listeners live only for the duration of one drag. (v1
+    // attached them once per render and removed them on the first mouseup
+    // anywhere, so after any click a chart could no longer be dragged.)
+    const begin = (d, e) => {
+      drag = d;
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+      e.preventDefault();
+    };
     head.addEventListener('mousedown', (e) => {
       if (e.target.tagName === 'BUTTON') return;
       const rect = layer.getBoundingClientRect();
-      drag = { mode: 'move', startMx: e.clientX, startMy: e.clientY, startX: chart.x, startY: chart.y, rect, snapped: false };
-      e.preventDefault();
+      begin({ mode: 'move', startMx: e.clientX, startMy: e.clientY, startX: chart.x, startY: chart.y, rect, snapped: false }, e);
     });
     // Resize handle
     const resizeHandle = document.createElement('div');
@@ -703,8 +345,8 @@ const Calc = (() => {
     panel.appendChild(resizeHandle);
     resizeHandle.addEventListener('mousedown', (e) => {
       const rect = layer.getBoundingClientRect();
-      drag = { mode: 'resize', startMx: e.clientX, startMy: e.clientY, startW: chart.w, startH: chart.h, rect, snapped: false };
-      e.preventDefault(); e.stopPropagation();
+      e.stopPropagation();
+      begin({ mode: 'resize', startMx: e.clientX, startMy: e.clientY, startW: chart.w, startH: chart.h, rect, snapped: false }, e);
     });
     const onMove = (e) => {
       if (!drag) return;
@@ -723,43 +365,38 @@ const Calc = (() => {
       panel.style.width = chart.w + '%';
       panel.style.height = chart.h + '%';
     };
-    const onUp = () => { if (drag) { drag = null; markDirty(); } document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      const moved = drag && drag.snapped;
+      drag = null;
+      if (moved) markDirty();
+    };
   }
 
 
+  // Paint one cell. Skips the DOM write when the text and style are
+  // unchanged, so a recalc only touches cells whose display changed.
   function renderCell(addr) {
-    const el = document.querySelector(`.calc-cell[data-addr="${addr}"]`);
+    const el = cellEls.get(addr);
     if (!el) return;
     const cell = data[addr];
-    if (!cell || cell.raw === '' || cell.raw == null) {
-      el.textContent = '';
-      el.classList.remove('calc-num','calc-str','calc-bool','calc-err');
-      return;
+    let text = '', kind = '';
+    if (cell && cell.raw !== '' && cell.raw != null) {
+      const v = cell.value;
+      if (typeof v === 'number') { text = formatNumber(v); kind = 'calc-num'; }
+      else if (typeof v === 'boolean') { text = v ? 'TRUE' : 'FALSE'; kind = 'calc-bool'; }
+      else if (Formula.isErr(v)) { text = v; kind = 'calc-err'; }
+      else { text = v == null ? '' : '' + v; kind = 'calc-str'; }
     }
-    let v = cell.value;
-    if (v instanceof Error) v = v.message;
-    if (typeof v === 'number') {
-      el.textContent = formatNumber(v);
-      el.className = 'calc-cell calc-num';
-    } else if (typeof v === 'boolean') {
-      el.textContent = v ? 'TRUE' : 'FALSE';
-      el.className = 'calc-cell calc-bool';
-    } else if (typeof v === 'string' && ERRORS.has(v)) {
-      el.textContent = v;
-      el.className = 'calc-cell calc-err';
-    } else {
-      el.textContent = v ?? '';
-      el.className = 'calc-cell calc-str';
-    }
+    if (el._shown === text && el._kind === kind) return;
+    el.textContent = text;
+    el.classList.remove('calc-num', 'calc-str', 'calc-bool', 'calc-err');
+    if (kind) el.classList.add(kind);
+    el._shown = text;
+    el._kind = kind;
   }
-  function formatNumber(n) {
-    if (!isFinite(n)) return n > 0 ? '#NUM!' : '#DIV/0!';
-    // Keep reasonable precision; avoid float noise like 0.30000000000000004
-    const r = Math.round(n * 1e10) / 1e10;
-    return '' + r;
-  }
+  const forgetPaint = (el) => { if (el) { el._shown = undefined; el._kind = undefined; } };
 
   function renderAll() {
     for (const addr of Object.keys(data)) renderCell(addr);
@@ -767,9 +404,12 @@ const Calc = (() => {
 
   // ---------- Editing ----------
   function setActive(addr) {
-    document.querySelectorAll('.calc-cell.active').forEach(e => e.classList.remove('active'));
+    if (activeEl) activeEl.classList.remove('active');
     activeCell = addr;
-    const el = document.querySelector(`.calc-cell[data-addr="${addr}"]`);
+    const pos = parseAddr(addr);
+    if (pos) ensureRows(pos.row + 1 + 20);
+    const el = cellEls.get(addr);
+    activeEl = el || null;
     if (el) {
       el.classList.add('active');
       el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
@@ -804,7 +444,12 @@ const Calc = (() => {
       else if (e.key === 'Tab') { e.preventDefault(); finishEdit(true); moveActive(e.shiftKey ? -1 : 1, 0); }
       return;
     }
-    const a = parseAddr(activeCell);
+    // Ctrl+D: fill down (was advertised in the tooltip but never wired).
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'd') {
+      e.preventDefault();
+      fillDown();
+      return;
+    }
     let handled = true;
     switch (e.key) {
       case 'ArrowUp':    moveActive(0, -1); break;
@@ -841,8 +486,9 @@ const Calc = (() => {
     if (editingCell) finishEdit(true);
     const addr = activeCell;
     editingCell = addr;
-    const el = document.querySelector(`.calc-cell[data-addr="${addr}"]`);
+    const el = cellEls.get(addr);
     if (!el) return;
+    forgetPaint(el);
     const inp = document.createElement('input');
     inp.className = 'calc-edit';
     inp.value = initialChar != null ? initialChar : ((data[addr] && data[addr].raw) || '');
@@ -863,11 +509,11 @@ const Calc = (() => {
   function finishEdit(commit) {
     if (!editingCell) return;
     const addr = editingCell;
-    const el = document.querySelector(`.calc-cell[data-addr="${addr}"]`);
+    const el = cellEls.get(addr);
     const inp = el && el.querySelector('input.calc-edit');
     const raw = inp ? inp.value : '';
     editingCell = null;
-    if (el) { el.classList.remove('editing'); el.innerHTML = ''; }
+    if (el) { el.classList.remove('editing'); el.innerHTML = ''; forgetPaint(el); }
     if (commit) {
       snapshot();
       if (raw === '') {
@@ -883,8 +529,11 @@ const Calc = (() => {
     renderCell(addr);
   }
   function cancelEdit() {
+    const el = cellEls.get(editingCell);
     editingCell = null;
+    if (el) { el.classList.remove('editing'); el.innerHTML = ''; forgetPaint(el); }
     renderCell(activeCell);
+    focusActiveCell();
   }
 
   // Formula bar editing
@@ -900,24 +549,26 @@ const Calc = (() => {
     snapshot();
     if (v === '') delete data[activeCell];
     else { if (!data[activeCell]) data[activeCell] = {}; data[activeCell].raw = v; }
-    recalcAll(); renderAll(); markDirty();
+    recalcAll(); renderAll(); renderCell(activeCell); markDirty();
     if (fromEnter) focusActiveCell();
   }
   function focusActiveCell() {
-    const el = document.querySelector('.calc-cell.active');
-    if (el) el.focus({ preventScroll: true });
+    if (activeEl) activeEl.focus({ preventScroll: true });
   }
 
   // ---------- Fill / clear ----------
+  // Copy the active cell into the one below and move there. Formulas are
+  // adjusted like Excel's: =A1*2 becomes =A2*2, $A$1 stays put.
   function fillDown() {
+    if (editingCell) finishEdit(true);
     const a = parseAddr(activeCell);
-    // Find selection? Just fill the value from current cell to all cells below until blank stop? simpler: fill one down.
+    if (!a || a.row + 1 >= ROWS) return;
     const src = data[activeCell];
     const below = keyOf(a.col, a.row + 1);
     snapshot();
-    if (src) { data[below] = { raw: src.raw }; }
+    if (src) data[below] = { raw: Formula.shiftRefs(src.raw, 1, 0) };
     else delete data[below];
-    recalcAll(); renderAll(); markDirty();
+    recalcAll(); renderAll(); renderCell(below); markDirty();
     setActive(below);
   }
   function clearSheet() {
@@ -948,11 +599,13 @@ const Calc = (() => {
   }
 
   // ---------- Multi-sheet lifecycle ----------
-  function addSheetRaw({ name = null, data: d = null, charts: c = [] } = {}) {
+  // book/sheetName: set for sheets imported from one multi-sheet workbook,
+  // so their cross-sheet formulas (Sheet2!A1) resolve to each other.
+  function addSheetRaw({ name = null, data: d = null, charts: c = [], book = null, sheetName = null } = {}) {
     const n = sheetSeq++;
     const id = 's' + n;
     if (!name) name = 'Sheet-' + n;
-    const sheet = { id, name, data: d || Object.create(null), charts: c, activeCell: 'A1' };
+    const sheet = { id, name, data: d || Object.create(null), charts: c, activeCell: 'A1', book, sheetName };
     sheets.push(sheet);
     return sheet;
   }
@@ -1003,7 +656,7 @@ const Calc = (() => {
     const doClose = () => {
       // Park the closed sheet for Ctrl+Shift+T reopen. For the active sheet
       // the live bindings ARE its data (shared references), so snapshot as-is.
-      closedSheets.unshift({ id: s.id, name: s.name, data: s.data, charts: s.charts, activeCell: s.activeCell });
+      closedSheets.unshift({ id: s.id, name: s.name, data: s.data, charts: s.charts, activeCell: s.activeCell, book: s.book, sheetName: s.sheetName });
       if (closedSheets.length > 10) closedSheets.length = 10;
       sheets.splice(i, 1);
       if (activeSheetId === id) {
@@ -1027,7 +680,7 @@ const Calc = (() => {
   function reopenSheet() {
     if (!closedSheets.length) { UI.toast('No recently closed sheets', 'info'); return; }
     const s = closedSheets.shift();
-    sheets.push({ id: s.id, name: s.name, data: s.data, charts: s.charts, activeCell: s.activeCell });
+    sheets.push({ id: s.id, name: s.name, data: s.data, charts: s.charts, activeCell: s.activeCell, book: s.book, sheetName: s.sheetName });
     activateSheet(s.id);
     markDirty();
     UI.toast(`Reopened ${s.name}`, 'success');
@@ -1050,6 +703,8 @@ const Calc = (() => {
   }
 
   // ---------- Import / Export ----------
+  // Every worksheet in the file is imported (v1 took only the first): the
+  // first lands in the active sheet if it is empty, the rest open as tabs.
   async function importFile() {
     try {
       const f = await FS.open({
@@ -1057,81 +712,113 @@ const Calc = (() => {
           { description: 'Spreadsheet', accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'], 'text/csv': ['.csv'], 'application/vnd.ms-excel': ['.xls'] } }
         ],
       });
+      await Libs.need('xlsx');
       const wb = XLSX.read(f.bytes, { type: 'array' });
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      if (!ws) { UI.toast('No sheets in file', 'warn'); return; }
-      // Parse into a fresh cell map first, then decide where it lands.
-      const imported = Object.create(null);
-      const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
-      for (let r = range.s.r; r <= Math.min(range.e.r, ROWS - 1); r++) {
-        for (let c = range.s.c; c <= Math.min(range.e.c, COLS - 1); c++) {
-          const addr = XLSX.utils.encode_cell({ r, c });
-          const cell = ws[addr];
-          if (cell == null) continue;
-          let raw;
-          if (cell.f) raw = '=' + cell.f;
-          else if (cell.t === 'n') raw = '' + cell.v;
-          else if (cell.t === 'b') raw = cell.v ? 'TRUE' : 'FALSE';
-          else raw = '' + (cell.w ?? cell.v ?? '');
-          imported[XLSX.utils.encode_cell({ r, c })] = { raw };
+      const names = wb.SheetNames.filter(n => wb.Sheets[n]);
+      if (!names.length) { UI.toast('No sheets in file', 'warn'); return; }
+      const base = f.name.replace(/\.[^.]+$/, '');
+      const multi = names.length > 1;
+      const book = multi ? 'b' + Date.now().toString(36) : null;
+      let clipped = false;
+      let firstId = null;
+      for (const sn of names) {
+        const res = readWorksheet(wb.Sheets[sn]);
+        clipped = clipped || res.clipped;
+        const name = multi ? base + ' – ' + sn : base;
+        const cur = activeSheet();
+        if (!firstId && cur && !sheetHasContent(cur)) {
+          // Pristine active sheet: load in place (single undo step).
+          snapshot();
+          for (const k of Object.keys(res.cells)) data[k] = res.cells[k];
+          Object.assign(cur, { name, book, sheetName: sn });
+          firstId = cur.id;
+        } else {
+          const sheet = addSheetRaw({ name, data: res.cells, book, sheetName: sn });
+          if (!firstId) firstId = sheet.id;
         }
       }
-      const name = f.name.replace(/\.[^.]+$/, '');
-      const cur = activeSheet();
-      if (cur && !sheetHasContent(cur)) {
-        // Pristine active sheet: load in place (single undo step).
-        snapshot();
-        for (const k of Object.keys(imported)) data[k] = imported[k];
-        cur.name = name;
-        recalcAll(); renderAll(); markDirty(); renderTabs();
-      } else {
-        // Sheet has content: open the import in a new tab.
-        addSheet({ name, data: imported });
-        markDirty();
-      }
-      UI.toast(`Imported ${f.name}`, 'success');
+      if (firstId === activeSheetId) { recalcAll(); renderAll(); renderTabs(); }
+      else activateSheet(firstId);
+      markDirty();
+      UI.toast(`Imported ${f.name}${multi ? ` (${names.length} sheets)` : ''}`, 'success');
+      if (clipped) UI.toast(`Only the first ${ROWS} rows × ${COLS} columns fit in Calc; the rest was not imported.`, 'warn', 6000);
     } catch (e) {
       if (e.name !== 'AbortError') UI.toast('Import failed: ' + e.message, 'error');
     }
   }
 
-  async function exportFile(fmt) {
-    // Build a worksheet from current data
-    const aoa = [];
-    let maxR = 0, maxC = 0;
-    for (const addr of Object.keys(data)) {
-      const a = parseAddr(addr); if (!a) continue;
-      maxR = Math.max(maxR, a.row); maxC = Math.max(maxC, a.col);
-    }
-    if (maxR === 0 && maxC === 0 && !data['A1']) { UI.toast('Nothing to export', 'warn'); return; }
-    for (let r = 0; r <= maxR; r++) {
-      const row = [];
-      for (let c = 0; c <= maxC; c++) {
-        const cell = data[keyOf(c, r)];
-        if (!cell) { row.push(null); continue; }
-        let v = cell.value;
-        if (v instanceof Error) v = v.message;
-        if (typeof v === 'string' && ERRORS.has(v)) v = v;
-        row.push(v ?? null);
+  function readWorksheet(ws) {
+    const cells = Object.create(null);
+    if (!ws['!ref']) return { cells, clipped: false };
+    const range = XLSX.utils.decode_range(ws['!ref']);
+    const clipped = range.e.r > ROWS - 1 || range.e.c > COLS - 1;
+    for (let r = range.s.r; r <= Math.min(range.e.r, ROWS - 1); r++) {
+      for (let c = range.s.c; c <= Math.min(range.e.c, COLS - 1); c++) {
+        const addr = XLSX.utils.encode_cell({ r, c });
+        const cell = ws[addr];
+        if (cell == null) continue;
+        let raw;
+        if (cell.f) raw = '=' + cell.f;
+        else if (cell.t === 'n') raw = '' + cell.v;
+        else if (cell.t === 'b') raw = cell.v ? 'TRUE' : 'FALSE';
+        else raw = '' + (cell.w ?? cell.v ?? '');
+        if (raw !== '') cells[addr] = { raw };
       }
-      aoa.push(row);
     }
-    const ws = XLSX.utils.aoa_to_sheet(aoa);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
-    const name = (sheetName() || 'sheet') + '.' + fmt;
-    // xlsx.write returns an ArrayBuffer when type='array'
-    const out = XLSX.write(wb, { bookType: fmt, type: 'array' });
-    const bytes = new Uint8Array(out);
-    const mime = fmt === 'csv' ? 'text/csv' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    return { cells, clipped };
+  }
+
+  // SheetJS error-cell codes.
+  const XL_ERRORS = { '#NULL!': 0x00, '#DIV/0!': 0x07, '#VALUE!': 0x0F, '#REF!': 0x17, '#NAME?': 0x1D, '#NUM!': 0x24, '#N/A': 0x2A };
+
+  // scope 'one' = the active sheet; 'all' = every open sheet as one workbook.
+  // .xlsx keeps formulas (v1 wrote only their values). CSV is values only.
+  async function exportFile(fmt, scope = 'one') {
     try {
-      await FS.save({ name, mime, bytes, handle: null });
-      UI.toast(`Exported ${name}`, 'success');
+      await Libs.need('xlsx');
+      const list = scope === 'all' ? sheets : [activeSheet()];
+      const wb = XLSX.utils.book_new();
+      const used = new Set();
+      for (const sh of list) {
+        const cellsOf = sh.id === activeSheetId ? data : sh.data;
+        if (sh.id !== activeSheetId) Formula.recalcSheet(cellsOf, resolverFor(sh));
+        const ws = {};
+        let maxR = -1, maxC = -1;
+        for (const addr of Object.keys(cellsOf)) {
+          const cell = cellsOf[addr];
+          const a = parseAddr(addr);
+          if (!a || cell.raw == null || cell.raw === '') continue;
+          maxR = Math.max(maxR, a.row); maxC = Math.max(maxC, a.col);
+          const v = cell.value;
+          let out;
+          if (typeof v === 'number') out = { t: 'n', v };
+          else if (typeof v === 'boolean') out = { t: 'b', v };
+          else if (Formula.isErr(v)) out = fmt === 'csv' ? { t: 's', v } : { t: 'e', v: XL_ERRORS[v] ?? 0x0F, w: v };
+          else out = { t: 's', v: v == null ? '' : '' + v };
+          if (fmt === 'xlsx' && String(cell.raw)[0] === '=') out.f = cell.raw.slice(1);
+          ws[addr] = out;
+        }
+        if (maxR < 0) continue;
+        ws['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: maxR, c: maxC } });
+        // Worksheet names: max 31 chars, no []:*?/\, unique.
+        const baseName = ((sh.sheetName || sh.name).replace(/[\[\]:*?/\\]/g, ' ').trim() || 'Sheet').slice(0, 31);
+        let wsName = baseName, k = 2;
+        while (used.has(wsName.toLowerCase())) wsName = baseName.slice(0, 28) + ' ' + (k++);
+        used.add(wsName.toLowerCase());
+        XLSX.utils.book_append_sheet(wb, ws, wsName);
+      }
+      if (!wb.SheetNames.length) { UI.toast('Nothing to export', 'warn'); return; }
+      const cur = activeSheet();
+      const stem = (cur.book ? cur.name.split(' – ')[0] : cur.name).replace(/[\\/:*?"<>|]/g, ' ').trim() || 'sheet';
+      const name = stem + '.' + fmt;
+      const out = XLSX.write(wb, { bookType: fmt, type: 'array' });
+      const mime = fmt === 'csv' ? 'text/csv' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+      const res = await FS.save({ name, mime, bytes: new Uint8Array(out), handle: null });
+      UI.toast(`Exported ${(res.handle && res.handle.name) || name}`, 'success');
     } catch (e) {
       if (e.name !== 'AbortError') UI.toast('Export failed: ' + e.message, 'error');
     }
   }
-  function sheetName() { return 'Sheet1'; }
 
   // ---------- Print ----------
   // Build a hidden HTML table of populated cells, print it, then remove it.
@@ -1222,6 +909,8 @@ const Calc = (() => {
     autosaveTimer = setTimeout(autosaveNow, 800);
   }
   async function autosaveNow() {
+    clearTimeout(autosaveTimer);
+    autosaveTimer = null;
     try {
       // Save every open sheet: { addr: raw } cells plus charts per sheet.
       const dumpSheets = sheets.map(s => {
@@ -1229,6 +918,7 @@ const Calc = (() => {
         for (const k of Object.keys(s.data)) cells[k] = s.data[k].raw;
         return {
           id: s.id, name: s.name, cells, charts: s.charts,
+          book: s.book || null, sheetName: s.sheetName || null,
           activeCell: s.id === activeSheetId ? activeCell : s.activeCell,
         };
       });
@@ -1236,10 +926,13 @@ const Calc = (() => {
       dirty = false;
     } catch (e) { /* ignore */ }
   }
+  // Page is being hidden/closed: write any pending autosave now.
+  function flush() {
+    if (autosaveTimer) autosaveNow();
+  }
 
   // ---------- Boot ----------
   async function boot() {
-    injectStyles();
     buildToolbar();
     buildGrid();
 
@@ -1264,19 +957,24 @@ const Calc = (() => {
     try {
       const saved = await Storage.load('calc:sheets');
       if (saved && Array.isArray(saved.sheets) && saved.sheets.length) {
+        const seen = new Set();
         for (const s of saved.sheets) {
           const d = Object.create(null);
           const cells = s.cells || {};
           for (const k of Object.keys(cells)) d[k] = { raw: cells[k] };
           const ch = Array.isArray(s.charts) ? s.charts : [];
-          for (const c of ch) chartSeq = Math.max(chartSeq, parseInt((c.id || 'ch0').slice(2)) + 1);
+          for (const c of ch) chartSeq = Math.max(chartSeq, (parseInt(String(c.id || 'ch0').slice(2), 10) || 0) + 1);
+          const id = (typeof s.id === 'string' && !seen.has(s.id)) ? s.id : null;
+          if (id) seen.add(id);
           sheets.push({
-            id: s.id || ('s' + (sheets.length + 1)),
-            name: s.name || 'Sheet', data: d, charts: ch,
+            id, name: s.name || 'Sheet', data: d, charts: ch,
             activeCell: s.activeCell || 'A1',
+            book: s.book || null, sheetName: s.sheetName || null,
           });
         }
-        sheetSeq = sheets.length + 1;
+        // Continue numbering after the highest id in use (not the tab count).
+        sheetSeq = Util.nextSeq([...seen], 's');
+        sheets.forEach(sh => { if (!sh.id) sh.id = 's' + (sheetSeq++); });
         activateSheet(saved.active && sheets.some(s => s.id === saved.active) ? saved.active : sheets[0].id);
       } else {
         // Migrate the pre-tabs single-sheet autosave (v1.2.x).
@@ -1347,123 +1045,19 @@ const Calc = (() => {
     body.style.cssText = 'min-width:240px';
     body.innerHTML = `
       <div style="display:flex;flex-direction:column;gap:6px">
-        <button class="tb-btn" data-x="xlsx" style="justify-content:flex-start">📊 Excel (.xlsx)</button>
-        <button class="tb-btn" data-x="csv"  style="justify-content:flex-start">📄 CSV (.csv)</button>
+        <button class="tb-btn" data-x="xlsx" data-scope="one" style="justify-content:flex-start">📊 Excel (.xlsx) — this sheet</button>
+        ${sheets.length > 1 ? `<button class="tb-btn" data-x="xlsx" data-scope="all" style="justify-content:flex-start">📚 Excel (.xlsx) — all ${sheets.length} open sheets</button>` : ''}
+        <button class="tb-btn" data-x="csv" data-scope="one" style="justify-content:flex-start">📄 CSV (.csv) — this sheet, values only</button>
       </div>`;
     const d = UI.dialog({ title: 'Export spreadsheet', body, okText: 'Close', cancelText: null });
-    d.el.querySelectorAll('[data-x]').forEach(b => b.onclick = () => { d.close(); exportFile(b.dataset.x); });
-  }
-
-  function injectStyles() {
-    if (document.getElementById('calc-styles')) return;
-    const s = document.createElement('style');
-    s.id = 'calc-styles';
-    s.textContent = `
-      .calc-wrap { display: flex; flex-direction: column; flex: 1; min-height: 0; position: relative; }
-      .calc-content {
-        flex: 1; min-height: 0; overflow: auto;
-        position: relative;
-        background: var(--surface);
-        font-family: var(--font-ui);
-        font-size: 13px;
-      }
-      .calc-corner {
-        position: sticky; top: 0; left: 0; z-index: 5;
-        width: 44px; height: 26px;
-        background: var(--surface-2); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);
-        display: grid; place-items: center; color: var(--text-faint);
-      }
-      .calc-colheader {
-        position: sticky; top: 0; z-index: 4;
-        display: flex; align-items: center;
-        height: 26px;
-        background: var(--surface-2);
-        border-bottom: 1px solid var(--border);
-      }
-      .calc-colheader .calc-spacer { width: 44px; flex-shrink: 0; border-right: 1px solid var(--border); height: 100%; }
-      .calc-colhead {
-        width: 92px; flex-shrink: 0;
-        text-align: center; line-height: 26px;
-        color: var(--text-dim); font-weight: 500;
-        border-right: 1px solid var(--border-soft);
-      }
-      .calc-body { display: grid; grid-template-columns: 44px repeat(${COLS}, 92px); align-content: start; }
-      .calc-rowhead {
-        position: sticky; left: 0; z-index: 3;
-        background: var(--surface-2);
-        border-right: 1px solid var(--border);
-        border-bottom: 1px solid var(--border-soft);
-        text-align: center; line-height: 26px;
-        color: var(--text-dim); font-size: 12px;
-        height: 26px;
-      }
-      .calc-cell {
-        height: 26px; padding: 0 6px;
-        border-right: 1px solid var(--border-soft);
-        border-bottom: 1px solid var(--border-soft);
-        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-        line-height: 26px;
-        outline: none;
-        cursor: cell;
-        user-select: none;
-      }
-      .calc-cell.calc-num { text-align: right; color: #111; }
-      body.theme-dark .calc-cell.calc-num { color: var(--text); }
-      .calc-cell.calc-bool { text-align: center; color: var(--text-dim); font-style: italic; }
-      .calc-cell.calc-err { color: var(--danger); text-align: center; font-weight: 600; }
-      .calc-cell.calc-str { color: var(--text); }
-      .calc-cell.active { outline: 2px solid var(--accent); outline-offset: -2px; }
-      .calc-cell.editing { padding: 0; }
-      .calc-edit {
-        width: 100%; height: 26px;
-        border: 0; outline: 2px solid var(--accent); outline-offset: -2px;
-        padding: 0 6px;
-        background: var(--surface); color: var(--text);
-        font: inherit;
-      }
-      /* Charts — floating overlay panels */
-      .calc-chart-layer {
-        position: absolute; inset: 0;
-        pointer-events: none;   /* let clicks pass to grid except on panels themselves */
-        z-index: 6;
-      }
-      .calc-chart-panel {
-        position: absolute;
-        background: var(--surface);
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        box-shadow: var(--shadow);
-        display: flex; flex-direction: column;
-        pointer-events: auto;
-        overflow: hidden;
-        min-width: 160px; min-height: 100px;
-      }
-      .calc-chart-head {
-        display: flex; align-items: center; gap: 2px;
-        padding: 4px 6px 4px 10px;
-        background: var(--surface-2);
-        border-bottom: 1px solid var(--border-soft);
-        cursor: move;
-        font-size: 12px; font-weight: 600; color: var(--text-dim);
-      }
-      .calc-chart-head .tb-btn.icon-only { width: 24px; height: 24px; font-size: 12px; }
-      .calc-chart-panel canvas { flex: 1; min-height: 0; padding: 6px; box-sizing: border-box; }
-      .calc-chart-resize {
-        position: absolute; right: 0; bottom: 0;
-        width: 14px; height: 14px;
-        cursor: nwse-resize;
-        background: linear-gradient(135deg, transparent 50%, var(--border) 50%);
-      }
-    `;
-    document.head.appendChild(s);
+    d.el.querySelectorAll('[data-x]').forEach(b => b.onclick = () => { d.close(); exportFile(b.dataset.x, b.dataset.scope); });
   }
 
   function onActivate() {
     setTimeout(() => {
-      const el = document.querySelector('.calc-cell.active');
-      if (el) el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      if (activeEl) activeEl.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     }, 0);
   }
 
-  return { boot, onActivate, undo: doUndo, redo: doRedo, reopen: reopenSheet };
+  return { boot, onActivate, flush, undo: doUndo, redo: doRedo, reopen: reopenSheet };
 })();

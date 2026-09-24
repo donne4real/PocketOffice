@@ -87,20 +87,9 @@ const MarkdownReader = (() => {
     renderTimer = setTimeout(render, 150);
   }
 
-  // Light sanitization (copy of Writer's): strip scripts/on-handlers.
-  function sanitizeHtml(html) {
-    const tmp = document.createElement('div');
-    tmp.innerHTML = html;
-    tmp.querySelectorAll('script, link, meta, iframe, object, embed, style').forEach(n => n.remove());
-    tmp.querySelectorAll('*').forEach(el => {
-      [...el.attributes].forEach(a => {
-        if (/^on/i.test(a.name)) el.removeAttribute(a.name);
-        if (a.name === 'href' && /^\s*javascript:/i.test(a.value)) el.removeAttribute(a.name);
-        if (a.name === 'src' && /^\s*javascript:/i.test(a.value)) el.removeAttribute(a.name);
-      });
-    });
-    return tmp.innerHTML;
-  }
+  // Shared DOMPurify-based cleaner (storage.js). Links open in a new tab so
+  // clicking one in the preview can't navigate PocketOffice away.
+  const sanitizeHtml = (html) => Sanitize.html(html, { newTabLinks: true });
 
   // ---------- Editor wiring ----------
   function wireEditor() {
@@ -187,11 +176,11 @@ const MarkdownReader = (() => {
     try {
       const res = await FS.save({ name: outName, mime, bytes, handle: asNew ? null : docHandle });
       if (res.handle) docHandle = res.handle;
-      docName = outName;
+      docName = (res.handle && res.handle.name) || outName;
       dirty = false;
       updateName();
       autosaveSoon();
-      UI.toast(res.downloaded ? `Downloaded ${outName}` : `Saved ${outName}`, 'success');
+      UI.toast(res.downloaded ? `Downloaded ${docName}` : `Saved ${docName}`, 'success');
     } catch (e) {
       if (e.name !== 'AbortError') UI.toast('Save failed: ' + (e.message || e), 'error');
     }
@@ -320,8 +309,12 @@ ${safe}
     autosaveTimer = setTimeout(autosaveNow, 800);
   }
   async function autosaveNow() {
+    clearTimeout(autosaveTimer);
+    autosaveTimer = null;
     try {
-      await Storage.save('markdown:doc', { source, name: docName });
+      // The file handle is kept so Ctrl+S after a restart saves in place.
+      await Util.saveWithHandles('markdown:doc', { source, name: docName, handle: docHandle, dirty },
+        (r) => Object.assign({}, r, { handle: null }));
       const el = $('statusAutosave');
       if (el) {
         const t = new Date().toLocaleTimeString();
@@ -331,65 +324,8 @@ ${safe}
     } catch (e) { /* ignore */ }
   }
 
-  // ---------- Styles ----------
-  function injectStyles() {
-    if (document.getElementById('markdown-styles')) return;
-    const s = document.createElement('style');
-    s.id = 'markdown-styles';
-    s.textContent = `
-      .md-wrap { display: flex; flex-direction: column; flex: 1; min-height: 0; }
-      .md-toolbar { display: flex; align-items: center; gap: 2px; flex-wrap: wrap;
-        min-height: var(--tb-h); padding: 5px 10px; background: var(--surface);
-        border-bottom: 1px solid var(--border); flex-shrink: 0; }
-      .md-split { display: flex; flex: 1; min-height: 0; }
-      .md-editor-pane { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-      .md-divider { width: 1px; background: var(--border); flex-shrink: 0; }
-      .md-preview-pane { flex: 1; min-width: 0; overflow: auto; background: var(--bg); }
-      .md-editor {
-        flex: 1; width: 100%; border: 0; outline: none; resize: none; padding: 18px 24px;
-        background: var(--surface); color: var(--text);
-        font-family: var(--font-mono); font-size: 14px; line-height: 1.6; tab-size: 2;
-      }
-      .md-readmode .md-preview-pane { flex: 1; }
-
-      /* Rendered markdown preview */
-      .md-preview {
-        max-width: 760px; margin: 24px auto; padding: 8px 24px;
-        font-family: var(--font-doc); font-size: 16px; line-height: 1.6; color: var(--text);
-        word-wrap: break-word;
-      }
-      .md-preview h1 { font-size: 2em; border-bottom: 1px solid var(--border-soft); padding-bottom: .3em; margin: .8em 0 .5em; }
-      .md-preview h2 { font-size: 1.5em; border-bottom: 1px solid var(--border-soft); padding-bottom: .3em; margin: 1em 0 .5em; }
-      .md-preview h3 { font-size: 1.25em; margin: 1em 0 .4em; }
-      .md-preview h4 { font-size: 1em; margin: 1em 0 .3em; }
-      .md-preview h5, .md-preview h6 { color: var(--text-dim); margin: 1em 0 .3em; }
-      .md-preview p { margin: 0 0 12px; }
-      .md-preview a { color: var(--accent); }
-      .md-preview ul, .md-preview ol { margin: 0 0 12px; padding-left: 28px; }
-      .md-preview li { margin: 3px 0; }
-      .md-preview code {
-        font-family: var(--font-mono); font-size: .9em;
-        background: var(--surface-3); padding: 2px 5px; border-radius: 4px;
-      }
-      .md-preview pre { background: var(--surface-3); padding: 14px; border-radius: 6px; overflow: auto; margin: 0 0 12px; }
-      .md-preview pre code { background: none; padding: 0; font-size: 13px; }
-      .md-preview blockquote {
-        border-left: 4px solid var(--border); margin: 0 0 12px; padding: 4px 16px;
-        color: var(--text-dim);
-      }
-      .md-preview table { border-collapse: collapse; margin: 0 0 12px; }
-      .md-preview th, .md-preview td { border: 1px solid var(--border); padding: 6px 12px; text-align: left; }
-      .md-preview th { background: var(--surface-2); }
-      .md-preview img { max-width: 100%; }
-      .md-preview hr { border: 0; border-top: 2px solid var(--border-soft); margin: 20px 0; }
-      .md-preview input[type=checkbox] { margin-right: 6px; }
-    `;
-    document.head.appendChild(s);
-  }
-
   // ---------- Boot ----------
   async function boot() {
-    injectStyles();
     buildUI();
     // Register undo: capture + restore the current source string.
     History.registerCurrentSnapshot('markdown',
@@ -406,6 +342,8 @@ ${safe}
       if (saved && typeof saved.source === 'string') {
         source = saved.source;
         if (saved.name) docName = saved.name;
+        if (saved.handle && typeof saved.handle === 'object') docHandle = saved.handle;
+        dirty = !!saved.dirty;
         $('mdEditor').value = source;
         render();
         updateName();
@@ -453,5 +391,10 @@ function hello() {
     setTimeout(() => $('mdEditor') && $('mdEditor').focus(), 0);
   }
 
-  return { boot, onActivate };
+  // Page is being hidden/closed: write any pending autosave now.
+  function flush() {
+    if (autosaveTimer) autosaveNow();
+  }
+
+  return { boot, onActivate, flush, undo: doUndo, redo: doRedo };
 })();

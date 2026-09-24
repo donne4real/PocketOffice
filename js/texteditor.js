@@ -61,7 +61,6 @@ const TextEditor = (() => {
       closedBuffers.unshift(b);
       if (closedBuffers.length > 10) closedBuffers.length = 10;
       buffers.splice(i, 1);
-      Storage.remove('text:' + b.name);
       History.reset('text:' + b.id);
       if (activeId === id) {
         activeId = buffers.length ? buffers[Math.max(0, i - 1)].id : null;
@@ -71,6 +70,7 @@ const TextEditor = (() => {
       } else {
         renderTabs();
         loadIntoEditor();
+        autosaveSoon();
       }
     };
     if (b.dirty) {
@@ -205,11 +205,12 @@ const TextEditor = (() => {
         handle: asNew ? null : b.handle,
       });
       if (res.handle) b.handle = res.handle;
-      b.name = name;
+      // The picker may have been given a different name; the handle knows.
+      b.name = (res.handle && res.handle.name) || name;
       b.dirty = false;
       renderTabs();
       autosaveSoon();
-      UI.toast(res.downloaded ? `Downloaded ${name}` : `Saved ${name}`, 'success');
+      UI.toast(res.downloaded ? `Downloaded ${b.name}` : `Saved ${b.name}`, 'success');
     } catch (e) {
       if (e.name !== 'AbortError') UI.toast('Save failed: ' + e.message, 'error');
     }
@@ -260,15 +261,28 @@ const TextEditor = (() => {
   }
 
   // ----- Autosave to IndexedDB -----
+  // One session record holds every tab in order, keyed by buffer id. (v1
+  // stored each buffer under its file NAME: renaming or changing the mode
+  // left the old entry behind as a ghost tab, and two files with the same
+  // name overwrote each other.)
+  const SESSION_KEY = 'texteditor:session';
   let autosaveTimer = null;
   function autosaveSoon() {
     clearTimeout(autosaveTimer);
     autosaveTimer = setTimeout(autosaveNow, 800);
   }
   async function autosaveNow() {
-    for (const b of buffers) {
-      try { await Storage.save('text:' + b.name, { text: b.text, mode: b.mode }); } catch (e) { /* ignore */ }
-    }
+    clearTimeout(autosaveTimer);
+    autosaveTimer = null;
+    captureActive();
+    const record = {
+      active: activeId,
+      buffers: buffers.map(b => ({ id: b.id, name: b.name, text: b.text, mode: b.mode, dirty: b.dirty, handle: b.handle || null })),
+    };
+    try {
+      await Util.saveWithHandles(SESSION_KEY, record,
+        (r) => Object.assign({}, r, { buffers: r.buffers.map(b => Object.assign({}, b, { handle: null })) }));
+    } catch (e) { return; }
     const el = document.getElementById('statusAutosave');
     if (el) {
       const t = new Date().toLocaleTimeString();
@@ -294,26 +308,50 @@ const TextEditor = (() => {
     });
     wireEvents();
     try {
-      const items = await Storage.list('text:');
-      if (items.length) {
-        for (const it of items) {
-          const v = it.value || {};
+      const saved = await Storage.load(SESSION_KEY);
+      if (saved && Array.isArray(saved.buffers) && saved.buffers.length) {
+        const seen = new Set();
+        for (const v of saved.buffers) {
+          const id = (typeof v.id === 'string' && !seen.has(v.id)) ? v.id : null;
+          if (id) seen.add(id);
           buffers.push({
-            id: 'b' + (seq++),
-            name: it.key.replace(/^text:/, ''),
-            text: v.text || '',
-            mode: v.mode || 'txt',
-            dirty: false,
-            handle: null,
+            id, name: v.name || 'Untitled.txt', text: v.text || '', mode: v.mode || 'txt',
+            dirty: !!v.dirty, handle: (v.handle && typeof v.handle === 'object') ? v.handle : null,
           });
         }
-        activeId = buffers[0].id;
+        seq = Util.nextSeq([...seen], 'b');
+        buffers.forEach(b => { if (!b.id) b.id = 'b' + (seq++); });
+        activeId = saved.active && buffers.some(b => b.id === saved.active) ? saved.active : buffers[0].id;
+      } else {
+        // Migrate v1's one-record-per-file-name autosave.
+        const legacy = await Storage.list('text:');
+        for (const it of legacy.reverse()) {    // oldest first ≈ original tab order
+          const v = it.value || {};
+          buffers.push({
+            id: 'b' + (seq++), name: it.key.replace(/^text:/, ''),
+            text: v.text || '', mode: v.mode || 'txt', dirty: false, handle: null,
+          });
+        }
+        if (buffers.length) {
+          activeId = buffers[0].id;
+          renderTabs();
+          loadIntoEditor();   // before saving: autosave reads the textarea
+          await autosaveNow();
+          for (const it of legacy) await Storage.remove(it.key);
+        }
+      }
+      if (buffers.length) {
         renderTabs();
         loadIntoEditor();
         return;
       }
     } catch (e) { /* ignore */ }
-    newBuffer({ name: 'Untitled-1.txt', text: '', mode: 'txt' });
+    if (!buffers.length) newBuffer({ name: 'Untitled-1.txt', text: '', mode: 'txt' });
+  }
+
+  // Page is being hidden/closed: write any pending autosave now.
+  function flush() {
+    if (autosaveTimer) autosaveNow();
   }
 
   function wireEvents() {
@@ -377,5 +415,5 @@ const TextEditor = (() => {
     setTimeout(() => els.textarea().focus(), 0);
   }
 
-  return { boot, newBuffer, onActivate, undo: teUndo, redo: teRedo, reopen: reopenBuffer };
+  return { boot, newBuffer, onActivate, flush, undo: teUndo, redo: teRedo, reopen: reopenBuffer };
 })();

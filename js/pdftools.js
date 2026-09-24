@@ -6,9 +6,13 @@
 
 const PdfTools = (() => {
   // ---- pdf.js setup ----
-  if (typeof pdfjsLib !== 'undefined') {
-    pdfjsLib.workerSrc = 'lib/pdf.worker.min.js';
-    if (pdfjsLib.GlobalWorkerOptions) pdfjsLib.GlobalWorkerOptions.workerSrc = 'lib/pdf.worker.min.js';
+  // pdf.js and pdf-lib load on first use. The standalone build supplies the
+  // worker as a blob URL through window.PO_PDF_WORKER_SRC.
+  async function ensurePdfjs() {
+    await Libs.need('pdfjs');
+    const src = window.PO_PDF_WORKER_SRC || 'lib/pdf.worker.min.js';
+    pdfjsLib.workerSrc = src;
+    if (pdfjsLib.GlobalWorkerOptions) pdfjsLib.GlobalWorkerOptions.workerSrc = src;
   }
   const PL = () => window.PDFLib;   // pdf-lib exposes PDFLib global
 
@@ -54,9 +58,12 @@ const PdfTools = (() => {
   }
 
   async function loadBytes(bytes, name) {
+    await ensurePdfjs();
     pdfBytes = bytes;
     fileName = name || 'document.pdf';
-    const task = pdfjsLib.getDocument({ data: bytes.slice(0) });
+    // isEvalSupported: false closes CVE-2024-4367 (a crafted font in a PDF
+    // could run script) in the bundled pdf.js 3.11 — see lib/VERSIONS.md.
+    const task = pdfjsLib.getDocument({ data: bytes.slice(0), isEvalSupported: false });
     pdfDoc = await task.promise;
     pageOrder = pdfDoc.numPages ? Array.from({ length: pdfDoc.numPages }, (_, i) => i) : [];
     for (const k of Object.keys(overlays)) delete overlays[k];
@@ -217,6 +224,7 @@ const PdfTools = (() => {
       });
       if (!files || !files.length) return;
       UI.toast(`Merging ${files.length} PDFs…`, 'info');
+      await Libs.need('pdflib');
       const out = await PL().PDFDocument.create();
       for (const f of files) {
         const src = await PL().PDFDocument.load(f.bytes);
@@ -246,6 +254,7 @@ const PdfTools = (() => {
         const spec = body.querySelector('#splitRange').value;
         const pages = parseRange(spec, pageOrder.length);
         if (!pages.length) { UI.toast('No valid pages in range', 'err'); return false; }
+        await Libs.need('pdflib');
         const src = await PL().PDFDocument.load(pdfBytes);
         const out = await PL().PDFDocument.create();
         // Map display page -> original index
@@ -375,6 +384,7 @@ const PdfTools = (() => {
     if (!pdfBytes) { UI.toast('Nothing to save', 'warn'); return; }
     try {
       UI.toast('Building PDF…', 'info');
+      await Libs.need('pdflib');
       const src = await PL().PDFDocument.load(pdfBytes);
       const out = await PL().PDFDocument.create();
       const helv = await out.embedFont(PL().StandardFonts.Helvetica);
@@ -430,12 +440,13 @@ const PdfTools = (() => {
         }
       }
       const saved = await out.save();
-      await FS.save({ name: fileName, mime: 'application/pdf', bytes: saved, handle: null });
+      const res = await FS.save({ name: fileName, mime: 'application/pdf', bytes: saved, handle: null });
+      if (res.handle && res.handle.name) fileName = res.handle.name;
       UI.toast(`Saved ${fileName} (${pageOrder.length} pages)`, 'success');
       // Reload from the saved bytes so further edits stack cleanly.
       await loadBytes(saved, fileName);
     } catch (e) {
-      UI.toast('Save failed: ' + (e.message || e), 'error');
+      if (e.name !== 'AbortError') UI.toast('Save failed: ' + (e.message || e), 'error');
     }
   }
 
