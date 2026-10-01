@@ -98,10 +98,10 @@ const PdfTools = (() => {
       bar.className = 'pdf-pagebar';
       bar.innerHTML = `<span class="pdf-pagelabel">Page ${display + 1}</span>
         <span style="flex:1"></span>
-        <button class="tb-btn icon-only" data-act="up" title="Move up">▲</button>
-        <button class="tb-btn icon-only" data-act="down" title="Move down">▼</button>
-        <button class="tb-btn icon-only" data-act="rotate" title="Rotate 90°">⟳</button>
-        <button class="tb-btn icon-only" data-act="delete" title="Delete page">🗑</button>`;
+        <button class="tb-btn icon-only" data-act="up" title="Move up" aria-label="Move page up">▲</button>
+        <button class="tb-btn icon-only" data-act="down" title="Move down" aria-label="Move page down">▼</button>
+        <button class="tb-btn icon-only" data-act="rotate" title="Rotate 90°" aria-label="Rotate page">⟳</button>
+        <button class="tb-btn icon-only" data-act="delete" title="Delete page" aria-label="Delete page">🗑</button>`;
       wrap.appendChild(bar);
       container.appendChild(wrap);
       await renderPage(origIdx, canvas);
@@ -474,6 +474,9 @@ const PdfTools = (() => {
     $('pdfZoomIn').onclick = () => zoomBy(0.15);
     $('pdfZoomOut').onclick = () => zoomBy(-0.15);
     $('pdfMergeBtn').onclick = mergePdfs;
+    // Empty-state shortcut buttons
+    const emptyOpen = $('pdfEmptyOpen'); if (emptyOpen) emptyOpen.onclick = openFile;
+    const emptyMerge = $('pdfEmptyMerge'); if (emptyMerge) emptyMerge.onclick = mergePdfs;
     $('pdfSplitBtn').onclick = splitPdf;
     $('pdfRotateBtn').onclick = () => {
       // rotate the first visible page as a quick action; full per-page via page bar

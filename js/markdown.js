@@ -25,11 +25,12 @@ const MarkdownReader = (() => {
       <div class="md-split" id="mdSplit">
         <div class="md-editor-pane" id="mdEditorPane">
           <textarea class="md-editor" id="mdEditor" spellcheck="false"
-            placeholder="# Type markdown here…&#10;&#10;Live preview appears on the right."></textarea>
+            placeholder="# Type markdown here…&#10;&#10;Live preview appears on the right."
+            aria-label="Markdown source editor"></textarea>
         </div>
         <div class="md-divider" id="mdDivider"></div>
         <div class="md-preview-pane" id="mdPreviewPane">
-          <div class="md-preview" id="mdPreview"></div>
+          <div class="md-preview" id="mdPreview" role="region" aria-label="Markdown preview" aria-live="polite"></div>
         </div>
       </div>`;
     buildToolbar();
@@ -41,7 +42,9 @@ const MarkdownReader = (() => {
     const btn = (label, fn, title, primary = false) => {
       const b = document.createElement('button');
       b.className = 'tb-btn' + (primary ? ' primary' : '');
-      b.innerHTML = label; b.title = title || ''; b.onclick = fn;
+      b.textContent = label; b.title = title || '';
+      if (title) b.setAttribute('aria-label', title);
+      b.onclick = fn;
       return b;
     };
     const sep = () => { const s = document.createElement('span'); s.className = 'tb-sep'; return s; };
@@ -129,12 +132,12 @@ const MarkdownReader = (() => {
       split.classList.add('md-readmode');
       editorPane.style.display = 'none';
       divider.style.display = 'none';
-      if (btn) btn.innerHTML = '✎ Edit';
+      if (btn) btn.textContent = '✎ Edit';
     } else {
       split.classList.remove('md-readmode');
       editorPane.style.display = '';
       divider.style.display = '';
-      if (btn) btn.innerHTML = '⇆ Split';
+      if (btn) btn.textContent = '⇆ Split';
     }
   }
 

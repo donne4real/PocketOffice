@@ -94,7 +94,18 @@ const FS = (() => {
   // file handle passed as `startIn` makes the picker open in its parent folder.
   async function rememberHandle(handle) {
     if (!handle) return;
-    try { await Storage.save('fs:lastHandle', handle); } catch (e) { /* non-fatal */ }
+    try {
+      await Storage.save('fs:lastHandle', handle);
+    } catch (e) {
+      // QuotaExceededError is common on locked-down corporate PCs with
+      // roaming profiles; DataCloneError means the browser can't store
+      // FileSystemFileHandles. Both are non-fatal but worth surfacing.
+      if (e && (e.name === 'QuotaExceededError' || e.name === 'DataCloneError')) {
+        if (typeof UI !== 'undefined' && UI.toast) {
+          UI.toast('Could not remember file location (' + e.name + ')', 'warn');
+        }
+      }
+    }
   }
   async function lastStartIn() {
     try {
@@ -248,7 +259,10 @@ const UI = (() => {
     back.className = 'dialog-backdrop';
     const dlg = document.createElement('div');
     dlg.className = 'dialog';
-    dlg.innerHTML = `<h3></h3><div class="dialog-body"></div>
+    dlg.setAttribute('role', 'dialog');
+    dlg.setAttribute('aria-modal', 'true');
+    dlg.setAttribute('aria-labelledby', 'dialog-title');
+    dlg.innerHTML = `<h3 id="dialog-title"></h3><div class="dialog-body"></div>
       <div class="actions">
         <button class="tb-btn ghost" data-act="cancel"></button>
         <button class="tb-btn primary" data-act="ok"></button>
@@ -546,6 +560,8 @@ const Tabs = (() => {
   function create({ mount, onActivate, onClose, onNew, onReorder, newTitle = 'New' }) {
     const strip = document.createElement('div');
     strip.className = 'te-tabs';
+    strip.setAttribute('role', 'tablist');
+    strip.setAttribute('aria-label', 'Document tabs');
     mount.appendChild(strip);
     let dragId = null;
     const clearOver = () => strip.querySelectorAll('.drag-over').forEach(n => n.classList.remove('drag-over'));
@@ -556,10 +572,14 @@ const Tabs = (() => {
     function render(list, activeId) {
       strip.innerHTML = '';
       list.forEach(d => {
+        const isActive = d.id === activeId;
         const t = document.createElement('div');
-        t.className = 'te-tab' + (d.id === activeId ? ' active' : '') + (d.dirty ? ' dirty' : '');
+        t.className = 'te-tab' + (isActive ? ' active' : '') + (d.dirty ? ' dirty' : '');
         t.title = d.name;
         t.draggable = true;
+        t.setAttribute('role', 'tab');
+        t.setAttribute('aria-selected', isActive ? 'true' : 'false');
+        t.setAttribute('tabindex', isActive ? '0' : '-1');
         t.addEventListener('dragstart', (e) => {
           dragId = d.id;
           t.classList.add('dragging');
@@ -590,6 +610,8 @@ const Tabs = (() => {
         x.className = 'close';
         x.textContent = '✕';
         x.title = 'Close';
+        x.setAttribute('role', 'button');
+        x.setAttribute('aria-label', 'Close ' + d.name);
         x.onclick = (e) => { e.stopPropagation(); onClose(d.id); };
         t.appendChild(x);
         t.onclick = () => { if (d.id !== activeId) onActivate(d.id); };
@@ -599,6 +621,7 @@ const Tabs = (() => {
       plus.className = 'te-new';
       plus.textContent = '＋ New';
       plus.title = newTitle;
+      plus.setAttribute('aria-label', newTitle);
       plus.onclick = onNew;
       strip.appendChild(plus);
     }

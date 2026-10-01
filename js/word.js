@@ -46,8 +46,9 @@ const Writer = (() => {
     const btn = (label, cmd, title, opts = {}) => {
       const b = document.createElement('button');
       b.className = 'tb-btn' + (opts.primary ? ' primary' : '') + (opts.iconOnly ? ' icon-only' : '');
-      b.innerHTML = label;
+      if (opts.html) b.innerHTML = label; else b.textContent = label;
       b.title = title || '';
+      if (title) b.setAttribute('aria-label', title);
       b.onclick = () => { editor.focus(); run(cmd, opts.value); };
       return b;
     };
@@ -64,10 +65,10 @@ const Writer = (() => {
 
     // Undo/redo
     const undoBtn = document.createElement('button');
-    undoBtn.className = 'tb-btn icon-only'; undoBtn.innerHTML = '↶'; undoBtn.title = 'Undo (Ctrl+Z)';
+    undoBtn.className = 'tb-btn icon-only'; undoBtn.textContent = '↶'; undoBtn.title = 'Undo (Ctrl+Z)'; undoBtn.setAttribute('aria-label', 'Undo');
     undoBtn.onclick = () => { editor.focus(); doUndo(); };
     const redoBtn = document.createElement('button');
-    redoBtn.className = 'tb-btn icon-only'; redoBtn.innerHTML = '↷'; redoBtn.title = 'Redo (Ctrl+Y)';
+    redoBtn.className = 'tb-btn icon-only'; redoBtn.textContent = '↷'; redoBtn.title = 'Redo (Ctrl+Y)'; redoBtn.setAttribute('aria-label', 'Redo');
     redoBtn.onclick = () => { editor.focus(); doRedo(); };
     group([undoBtn, redoBtn]);
 
@@ -87,10 +88,10 @@ const Writer = (() => {
 
     // Inline format
     group([
-      btn('<b>B</b>', 'bold', 'Bold (Ctrl+B)'),
-      btn('<i>I</i>', 'italic', 'Italic (Ctrl+I)'),
-      btn('<u>U</u>', 'underline', 'Underline (Ctrl+U)'),
-      btn('<s>S</s>', 'strikeThrough', 'Strikethrough'),
+      btn('<b>B</b>', 'bold', 'Bold (Ctrl+B)', { html: true }),
+      btn('<i>I</i>', 'italic', 'Italic (Ctrl+I)', { html: true }),
+      btn('<u>U</u>', 'underline', 'Underline (Ctrl+U)', { html: true }),
+      btn('<s>S</s>', 'strikeThrough', 'Strikethrough', { html: true }),
       btn('🎨', 'foreColor', 'Text color', { value: null }),
       btn('🟡', 'hiliteColor', 'Highlight', { value: null }),
     ]);
@@ -212,6 +213,13 @@ const Writer = (() => {
       History.snapshot(docKey(), editor.innerHTML, (html) => { editor.innerHTML = html; markDirty(); });
       undoArmed = false;
     }
+    // document.execCommand is deprecated but still the only reliable way to
+    // apply rich-text formatting in a contentEditable surface. Wrap it so
+    // the tool degrades gracefully if the API is ever removed.
+    if (typeof document.execCommand !== 'function') {
+      UI.toast('Formatting is not supported in this browser (missing execCommand)', 'error');
+      return;
+    }
     // Some browsers want styleWithCSS on for color/hilite.
     try { document.execCommand('styleWithCSS', false, (cmd === 'foreColor' || cmd === 'hiliteColor') + ''); } catch (e) {}
     document.execCommand(cmd, false, value === undefined ? null : value);
@@ -258,7 +266,12 @@ const Writer = (() => {
         }
         html += '</table><p><br></p>';
         editor.focus();
-        document.execCommand('insertHTML', false, html);
+        if (typeof document.execCommand === 'function') {
+          document.execCommand('insertHTML', false, html);
+        } else {
+          // Fallback: insert at the end of the editor
+          editor.insertAdjacentHTML('beforeend', html);
+        }
         markDirty();
       }
     });
@@ -707,11 +720,19 @@ const Writer = (() => {
     doc.className = 'writer-doc';
     doc.contentEditable = 'true';
     doc.spellcheck = true;
+    doc.setAttribute('aria-label', 'Document editor');
+    doc.setAttribute('role', 'textbox');
+    doc.setAttribute('aria-multiline', 'true');
     doc.innerHTML = '<p><br></p>';
     editor.appendChild(doc);
     editor = doc;
 
     buildToolbar();
+
+    // Warn once at boot if the deprecated execCommand API is missing.
+    if (typeof document.execCommand !== 'function') {
+      UI.toast('Writer: rich-text formatting is not available in this browser', 'warn', 6000);
+    }
 
     tabs = Tabs.create({
       mount: $('writerTabs'),

@@ -60,6 +60,7 @@ const Formula = (() => {
   // Any character the grammar doesn't know is a syntax error — the old
   // regex tokenizer skipped it, so =50% quietly evaluated to 50.
   const REF_RE = /^(\$?)([A-Za-z]{1,3})(\$?)(\d+)$/;
+  const MAX_TOKENS = 10000;   // guard against crafted formulas
 
   function tokenize(expr) {
     const toks = [];
@@ -76,6 +77,7 @@ const Formula = (() => {
     }
 
     while (i < n) {
+      if (toks.length >= MAX_TOKENS) throw error('#ERROR!');
       const c = expr[i];
       if (c === ' ' || c === '\t' || c === '\n' || c === '\r') { i++; continue; }
 
@@ -172,16 +174,20 @@ const Formula = (() => {
   function parse(expr) {
     const toks = tokenize(expr);
     let pos = 0;
+    let depth = 0;
+    const MAX_DEPTH = 100;   // max nesting depth for parentheses/expressions
     const peek = () => toks[pos];
     const isOp = (...vs) => { const t = toks[pos]; return !!t && t.t === 'op' && vs.includes(t.v); };
     const expectOp = (v) => { if (!isOp(v)) throw error('#ERROR!'); pos++; };
 
     function comparison() {
+      if (++depth > MAX_DEPTH) throw error('#ERROR!');
       let left = concat();
       while (isOp('=', '<>', '!=', '<', '>', '<=', '>=')) {
         const op = toks[pos++].v;
         left = { t: 'binop', op, left, right: concat() };
       }
+      depth--;
       return left;
     }
     function concat() {

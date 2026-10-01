@@ -1,5 +1,66 @@
 # Changelog
 
+## v2.0.1 — 2026-09-24
+
+### Security hardening
+- **CSP:** Added `Content-Security-Policy` meta tag restricting scripts to
+  `'self'`, blocking `object`, `frame`, and `eval`, and allowing `data:` and
+  `blob:` only for images and workers.
+- **SRI:** Every `<script>` and `<link>` tag (static and dynamically loaded)
+  now carries a `sha384` integrity hash. The dynamic loader (`js/libs.js`)
+  sets `integrity` + `crossOrigin` on injected scripts.
+- **XSS:** Toolbar `btn()` helpers across Writer, Calc, Impress and Markdown
+  now use `textContent` by default; only the four rich-formatting buttons
+  (`<b>B</b>` etc.) opt in via `{ html: true }`.
+- **Inline handlers:** Removed the two `onclick` attributes from the PDF
+  empty-state buttons (CSP blocks inline event handlers); wired them in
+  `pdftools.js` instead.
+- **Formula cap:** The tokenizer caps at 10,000 tokens and the parser at
+  100 nesting levels, preventing DoS from crafted formulas.
+
+### Accessibility (ARIA)
+- App tab strip: `role="tablist"`, `role="tab"`, `aria-selected`, roving
+  `tabindex`; each tool panel gets `role="tabpanel"`.
+- Document tabs (shared `Tabs` component): `role="tablist"`, `role="tab"`,
+  `aria-selected`, `aria-label` on close buttons.
+- Calc grid: `role="grid"` / `role="gridcell"` / `aria-label="{cell addr}"`.
+- Impress slide list: `role="listbox"` / `role="option"` / `aria-selected`.
+- Writer editor: `role="textbox"`, `aria-multiline`.
+- Markdown preview: `role="region"`, `aria-live="polite"`.
+- Dialogs: `role="dialog"`, `aria-modal`, `aria-labelledby`.
+- Toasts: `role="status"`, `aria-live="polite"`.
+- `aria-label` on every icon-only button (PDF page bar, zoom, undo/redo,
+  find bar, slide actions, theme toggle, about).
+- Formula bar, textareas, and the contentEditable editor have `aria-label`.
+
+### Performance
+- Calc initial grid reduced from 10,000 cells (100 rows) to 2,000 cells
+  (20 rows). Scroll handler still loads more on demand.
+- Chart.js instances are now destroyed when a sheet is closed or when the
+  chart layer is re-rendered, preventing memory leaks.
+
+### Robustness
+- `document.execCommand` deprecation shim: `word.js` now checks for the API
+  at runtime and shows a toast if it's missing; `insertHTML` falls back to
+  `insertAdjacentHTML`.
+- IndexedDB handle persistence: `FS.rememberHandle()` now surfaces a warning
+  toast on `QuotaExceededError` or `DataCloneError` instead of swallowing
+  silently.
+
+### Cross-platform
+- Added `start.sh` launcher for macOS and Linux (tries `open` / `xdg-open`,
+  then common browser names).
+
+### Testing
+- New `tests/docexport.test.js` (8 tests) covering `parseColor` and `hex`
+  helpers. Total: 32 tests, 0 failures.
+
+### Documentation
+- README: mentioned `start.sh`, added SheetJS CE commercial-license note.
+- CSS: fallback values before `var()` on critical properties; browser
+  requirement documented in header comment.
+- `lib/VERSIONS.md`: documented SRI hash location in `libs.js`.
+
 ## v2.0.0 — 2026-09-23
 
 v1.4.0 is archived unchanged in `../PocketOffice-archive/PocketOffice-v1.4.0/`.

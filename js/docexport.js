@@ -484,5 +484,7 @@ const DocExport = (() => {
     return new Uint8Array(pdf.output('arraybuffer'));
   }
 
-  return { toDocx, toPdf, collect };
+  return { toDocx, toPdf, collect, parseColor, hex };
 })();
+
+if (typeof module !== 'undefined' && module.exports) module.exports = DocExport;

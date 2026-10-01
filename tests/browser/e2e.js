@@ -49,7 +49,7 @@ function check(name, ok, detail = '') { results.push({ name, ok: !!ok, detail })
     check('version shown from version.js', boot.ver.includes('2.0.0'), boot.ver);
     check('big libraries not loaded at startup', boot.lazy);
     check('DOMPurify loaded', boot.purify);
-    check('Calc grid starts small (100 rows)', boot.cells === 100 * 100, boot.cells + ' cells');
+    check('Calc grid starts small (20 rows)', boot.cells === 20 * 100, boot.cells + ' cells');
 
     // ---------- Calc ----------
     const calc = await run(async () => {

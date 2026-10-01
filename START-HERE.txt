@@ -14,15 +14,19 @@ WHAT IT IS
 STEP 1 — Copy this whole "PocketOffice" folder to the PC
 ------------------------------------------------------------
   USB stick, Desktop, Documents — anywhere you can write.
-  The folder must contain: start.bat, index.html, css/, js/, lib/
+  The folder must contain: start.bat (Windows) or start.sh (Mac/Linux),
+  index.html, css/, js/, lib/
 
 ------------------------------------------------------------
 STEP 2 — Open it (pick ONE method)
 ------------------------------------------------------------
 
-  EASIEST:  double-click  start.bat
+  EASIEST (Windows):  double-click  start.bat
             (it finds Microsoft Edge or Google Chrome for you and
              opens PocketOffice, even if .html files are locked)
+
+  EASIEST (Mac/Linux):  run  bash start.sh  in a terminal
+            (it finds your default browser automatically)
 
   ALSO WORKS:  double-click  index.html
                (opens in your default browser)

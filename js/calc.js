@@ -8,6 +8,7 @@
 const Calc = (() => {
   const COLS = 100;       // A..CV
   const ROWS = 1000;
+  const ROW_CHUNK = 20;   // initial rows rendered (scroll loads more)
   // Multi-sheet: each sheet owns { id, name, data, charts, activeCell }.
   // The live `data`/`charts`/`activeCell` bindings point at the active sheet;
   // all mutations go through them, so the sheet objects stay in sync.
@@ -95,6 +96,8 @@ const Calc = (() => {
     // down (v1 built all 100,000 cells at startup).
     const scrollBody = document.createElement('div');
     scrollBody.className = 'calc-body';
+    scrollBody.setAttribute('role', 'grid');
+    scrollBody.setAttribute('aria-label', 'Spreadsheet grid');
     wrap.appendChild(scrollBody);
     gridBody = scrollBody;
     ensureRows(ROW_CHUNK);
@@ -127,6 +130,7 @@ const Calc = (() => {
       const rowHead = document.createElement('div');
       rowHead.className = 'calc-rowhead';
       rowHead.textContent = r + 1;
+      rowHead.setAttribute('role', 'rowheader');
       frag.appendChild(rowHead);
       for (let c = 0; c < COLS; c++) {
         const cell = document.createElement('div');
@@ -134,6 +138,8 @@ const Calc = (() => {
         cell.className = 'calc-cell';
         cell.dataset.addr = addr;
         cell.tabIndex = -1;
+        cell.setAttribute('role', 'gridcell');
+        cell.setAttribute('aria-label', addr);
         cellEls.set(addr, cell);
         frag.appendChild(cell);
       }
@@ -255,6 +261,16 @@ const Calc = (() => {
     };
   }
 
+  // Destroy all Chart.js instances attached to canvases inside a container.
+  // Chart.js holds internal references that outlive DOM removal, so this
+  // must be called before clearing innerHTML or removing the container.
+  function destroyChartInstances(container) {
+    if (!container) return;
+    container.querySelectorAll('canvas').forEach(c => {
+      if (c._chart) { c._chart.destroy(); c._chart = null; }
+    });
+  }
+
   function renderCharts() {
     const layer = $('calcChartLayer');
     if (!layer) return;
@@ -263,6 +279,9 @@ const Calc = (() => {
       Libs.need('chart').then(renderCharts).catch(e => UI.toast(e.message, 'error'));
       return;
     }
+    // Destroy existing Chart.js instances before clearing the layer to
+    // prevent memory leaks (Chart.js holds references to canvas contexts).
+    destroyChartInstances(layer);
     // Remove panels that no longer exist; rebuild the rest.
     layer.innerHTML = '';
     for (const chart of charts) {
@@ -654,6 +673,8 @@ const Calc = (() => {
     if (i < 0) return;
     const s = sheets[i];
     const doClose = () => {
+      // Destroy Chart.js instances for this sheet before removing it.
+      destroyChartInstances($('calcChartLayer'));
       // Park the closed sheet for Ctrl+Shift+T reopen. For the active sheet
       // the live bindings ARE its data (shared references), so snapshot as-is.
       closedSheets.unshift({ id: s.id, name: s.name, data: s.data, charts: s.charts, activeCell: s.activeCell, book: s.book, sheetName: s.sheetName });
@@ -1003,7 +1024,8 @@ const Calc = (() => {
     const btn = (label, fn, title, primary=false) => {
       const b = document.createElement('button');
       b.className = 'tb-btn' + (primary?' primary':'');
-      b.innerHTML = label; b.title = title || '';
+      b.textContent = label; b.title = title || '';
+      if (title) b.setAttribute('aria-label', title);
       b.onclick = fn; return b;
     };
     tb.appendChild(btn('＋ New', newSheet, 'New blank sheet'));
@@ -1037,6 +1059,7 @@ const Calc = (() => {
     inp.style.flex = '1';
     inp.style.minWidth = '180px';
     inp.placeholder = 'Type a value or formula (e.g. =SUM(A1:A10))';
+    inp.setAttribute('aria-label', 'Formula bar');
     tb.appendChild(inp);
   }
 

@@ -90,7 +90,8 @@ overwriting the original (use Save As… to keep it untouched).
 
 1. Download or clone this repo.
 2. Open the `PocketOffice/` folder.
-3. **Double-click `start.bat`** (finds Edge/Chrome automatically) — or double-click `index.html`.
+3. **Windows:** double-click `start.bat` (finds Edge/Chrome automatically) — or double-click `index.html`.
+   **macOS / Linux:** run `bash start.sh` in a terminal — or open `index.html` in your browser directly.
 
 ### Option B — run the live demo
 
@@ -211,6 +212,13 @@ Built with these excellent open-source libraries, all bundled locally:
 | [Inter](https://rsms.me/inter/) · [Lora](https://github.com/cyrealtype/Lora-Cyrillic) · [JetBrains Mono](https://www.jetbrains.com/lp/mono/) | SIL OFL 1.1 | Bundled fonts |
 
 PocketOffice itself is plain vanilla JS — read it, learn from it, change it.
+
+> **Note on SheetJS CE:** The bundled SheetJS Community Edition
+> (`lib/xlsx.full.min.js`) is licensed under Apache-2.0 **with an additional
+> restriction** that prohibits commercial use without a paid license from
+> SheetJS LLC. If you plan to use PocketOffice in a commercial setting,
+> review the [SheetJS license terms](https://sheetjs.com/) and consider
+> purchasing a commercial license or replacing the library.
 
 ## License
 

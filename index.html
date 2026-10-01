@@ -3,41 +3,55 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self';
+                 script-src 'self';
+                 style-src 'self' 'unsafe-inline';
+                 img-src 'self' data: blob:;
+                 font-src 'self';
+                 connect-src 'self';
+                 worker-src 'self' blob:;
+                 object-src 'none';
+                 base-uri 'self';
+                 form-action 'self';
+                 frame-src 'none'" />
   <title>PocketOffice</title>
-  <link rel="stylesheet" href="css/app.css" />
-  <link rel="stylesheet" href="css/fonts.css" />
+  <link rel="stylesheet" href="css/app.css"
+        integrity="sha384-BC59jMgQSUAiBDDr4RvF1mdlAkiwlOPkMOErqBKqRidiimuTw/BpcUpMMDgXhmVZ" />
+  <link rel="stylesheet" href="css/fonts.css"
+        integrity="sha384-pdWv7CsjiZ9wMraK07YNKW3qgRlCHhpTGz/k0g9C9cEbpYnuCFH/apWj0KjWPXfg" />
 </head>
 <body>
   <div id="app">
     <!-- ====================== APP TAB STRIP ====================== -->
-    <header class="app-tabs">
+    <header class="app-tabs" role="tablist" aria-label="Application tabs">
       <div class="brand">
         <div class="brand-logo">P</div>
         <div class="brand-name">PocketOffice</div>
       </div>
 
-      <button class="app-tab" data-app="writer"><span class="ico">📝</span>Writer</button>
-      <button class="app-tab" data-app="calc"><span class="ico">📊</span>Calc</button>
-      <button class="app-tab" data-app="impress"><span class="ico">📽️</span>Impress</button>
-      <button class="app-tab active" data-app="text"><span class="ico">📄</span>Text Editor</button>
-      <button class="app-tab" data-app="pdf"><span class="ico">📕</span>PDF Tools</button>
-      <button class="app-tab" data-app="markdown"><span class="ico">📖</span>Markdown</button>
+      <button class="app-tab" data-app="writer" role="tab" aria-selected="false" aria-controls="panel-writer"><span class="ico" aria-hidden="true">📝</span>Writer</button>
+      <button class="app-tab" data-app="calc" role="tab" aria-selected="false" aria-controls="panel-calc"><span class="ico" aria-hidden="true">📊</span>Calc</button>
+      <button class="app-tab" data-app="impress" role="tab" aria-selected="false" aria-controls="panel-impress"><span class="ico" aria-hidden="true">📽️</span>Impress</button>
+      <button class="app-tab active" data-app="text" role="tab" aria-selected="true" aria-controls="panel-text"><span class="ico" aria-hidden="true">📄</span>Text Editor</button>
+      <button class="app-tab" data-app="pdf" role="tab" aria-selected="false" aria-controls="panel-pdf"><span class="ico" aria-hidden="true">📕</span>PDF Tools</button>
+      <button class="app-tab" data-app="markdown" role="tab" aria-selected="false" aria-controls="panel-markdown"><span class="ico" aria-hidden="true">📖</span>Markdown</button>
 
       <div class="tab-spacer"></div>
-      <button class="icon-btn" id="themeToggle" title="Toggle dark mode">🌙</button>
-      <button class="icon-btn" id="aboutBtn" title="About">ⓘ</button>
+      <button class="icon-btn" id="themeToggle" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
+      <button class="icon-btn" id="aboutBtn" title="About" aria-label="About PocketOffice">ⓘ</button>
     </header>
 
     <main class="workspace">
       <!-- ====================== WRITER ====================== -->
-      <section class="tool-panel" data-app="writer">
+      <section class="tool-panel" data-app="writer" id="panel-writer" role="tabpanel" aria-label="Writer">
         <div class="toolbar" id="writerToolbar"><!-- built by word.js --></div>
         <div id="writerTabs"><!-- document tab strip --></div>
         <div class="writer-surface" id="writerContent"></div>
       </section>
 
       <!-- ====================== CALC ====================== -->
-      <section class="tool-panel" data-app="calc">
+      <section class="tool-panel" data-app="calc" id="panel-calc" role="tabpanel" aria-label="Calc">
         <div class="toolbar" id="calcToolbar"><!-- built by calc.js --></div>
         <div class="calc-wrap">
           <div id="calcTabs"><!-- sheet tab strip --></div>
@@ -46,13 +60,13 @@
       </section>
 
       <!-- ====================== IMPRESS ====================== -->
-      <section class="tool-panel" data-app="impress">
+      <section class="tool-panel" data-app="impress" id="panel-impress" role="tabpanel" aria-label="Impress">
         <div class="toolbar" id="impressToolbar"><!-- built by impress.js --></div>
         <div class="impress-wrap" id="impressContent"></div>
       </section>
 
       <!-- ====================== TEXT EDITOR ====================== -->
-      <section class="tool-panel active" data-app="text">
+      <section class="tool-panel active" data-app="text" id="panel-text" role="tabpanel" aria-label="Text Editor">
         <div class="toolbar" id="teToolbar">
           <button class="tb-btn" id="teNew">＋ New</button>
           <button class="tb-btn" id="teOpen">📂 Open…</button>
@@ -76,40 +90,40 @@
         </div>
         <div class="te-find" id="teFindBar">
           <input type="text" id="teFindInput" placeholder="Find…" style="width:220px" />
-          <button class="tb-btn" id="teFindPrev">↑</button>
-          <button class="tb-btn" id="teFindNext">↓</button>
+          <button class="tb-btn" id="teFindPrev" aria-label="Previous match">↑</button>
+          <button class="tb-btn" id="teFindNext" aria-label="Next match">↓</button>
           <span class="tb-label" id="teFindCount"></span>
           <span style="flex:1"></span>
-          <button class="icon-btn" id="teFindClose">✕</button>
+          <button class="icon-btn" id="teFindClose" aria-label="Close find bar">✕</button>
         </div>
         <div class="te-wrap">
           <div class="te-tabs" id="teTabs"></div>
           <div class="te-editor">
             <div class="te-gutter" id="teGutter"></div>
-            <textarea class="te-textarea" id="teTextarea" spellcheck="false" wrap="off"></textarea>
+            <textarea class="te-textarea" id="teTextarea" spellcheck="false" wrap="off" aria-label="Text editor content"></textarea>
           </div>
         </div>
       </section>
 
       <!-- ====================== PDF TOOLS ====================== -->
-      <section class="tool-panel" data-app="pdf">
+      <section class="tool-panel" data-app="pdf" id="panel-pdf" role="tabpanel" aria-label="PDF Tools">
         <div class="toolbar" id="pdfToolbar">
           <button class="tb-btn primary" id="pdfOpen">📂 Open PDF…</button>
           <button class="tb-btn ghost" id="pdfClose" style="display:none">✕ Close</button>
           <span class="tb-sep"></span>
           <span class="tb-label" id="pdfDocName" style="display:none"></span>
           <span class="tb-sep" id="pdfNavSep" style="display:none"></span>
-          <button class="tb-btn icon-only" id="pdfPrev" style="display:none" title="First page">⏮</button>
+          <button class="tb-btn icon-only" id="pdfPrev" style="display:none" title="First page" aria-label="First page">⏮</button>
           <span class="tb-label" id="pdfPageInfo" style="display:none"></span>
-          <button class="tb-btn icon-only" id="pdfNext" style="display:none" title="Last page">⏭</button>
+          <button class="tb-btn icon-only" id="pdfNext" style="display:none" title="Last page" aria-label="Last page">⏭</button>
           <span class="tb-sep" id="pdfZoomSep" style="display:none"></span>
-          <button class="tb-btn icon-only" id="pdfZoomOut" style="display:none" title="Zoom out">−</button>
+          <button class="tb-btn icon-only" id="pdfZoomOut" style="display:none" title="Zoom out" aria-label="Zoom out">−</button>
           <span class="tb-label" id="pdfZoomInfo" style="display:none">120%</span>
-          <button class="tb-btn icon-only" id="pdfZoomIn" style="display:none" title="Zoom in">+</button>
+          <button class="tb-btn icon-only" id="pdfZoomIn" style="display:none" title="Zoom in" aria-label="Zoom in">+</button>
           <span class="tb-sep" id="pdfSep2" style="display:none"></span>
           <button class="tb-btn" id="pdfMergeBtn" title="Merge multiple PDFs into one">🔗 Merge</button>
-          <button class="tb-btn icon-only" id="pdfUndoBtn" style="display:none" title="Undo (Ctrl+Z)">↶</button>
-          <button class="tb-btn icon-only" id="pdfRedoBtn" style="display:none" title="Redo (Ctrl+Y)">↷</button>
+          <button class="tb-btn icon-only" id="pdfUndoBtn" style="display:none" title="Undo (Ctrl+Z)" aria-label="Undo">↶</button>
+          <button class="tb-btn icon-only" id="pdfRedoBtn" style="display:none" title="Redo (Ctrl+Y)" aria-label="Redo">↷</button>
           <button class="tb-btn" id="pdfSplitBtn" style="display:none" title="Extract page range">✂ Split</button>
           <button class="tb-btn" id="pdfRotateBtn" style="display:none" title="Rotate first page">⟳ Rotate</button>
           <button class="tb-btn" id="pdfDeleteBtn" style="display:none" title="Delete a page">🗑 Delete</button>
@@ -126,8 +140,8 @@
                 <h2>📕 PDF Tools</h2>
                 <p>Open a PDF to view, reorder, rotate, delete, and annotate pages — or merge multiple PDFs. Sign by drawing. Everything runs locally; no upload.</p>
                 <div class="big-btns">
-                  <button class="tb-btn primary" onclick="document.getElementById('pdfOpen').click()">📂 Open a PDF</button>
-                  <button class="tb-btn" onclick="document.getElementById('pdfMergeBtn').click()">🔗 Merge PDFs</button>
+                  <button class="tb-btn primary" id="pdfEmptyOpen">📂 Open a PDF</button>
+                  <button class="tb-btn" id="pdfEmptyMerge">🔗 Merge PDFs</button>
                 </div>
                 <p class="muted small" style="margin-top:14px">Honest limitation: editing existing text inside a PDF (rewriting words already in the file) isn't supported — even LibreOffice struggles with that. You can add text, signatures, images, and restructure pages freely.</p>
               </div>
@@ -138,7 +152,7 @@
       </section>
 
       <!-- ====================== MARKDOWN ====================== -->
-      <section class="tool-panel" data-app="markdown">
+      <section class="tool-panel" data-app="markdown" id="panel-markdown" role="tabpanel" aria-label="Markdown">
         <div class="md-wrap" id="mdContent"><!-- built by markdown.js --></div>
       </section>
     </main>
@@ -153,28 +167,42 @@
     </footer>
   </div>
 
-  <div id="toasts"></div>
-  <div id="dialogRoot"></div>
+  <div id="toasts" role="status" aria-live="polite" aria-atomic="true"></div>
+  <div id="dialogRoot" role="presentation"></div>
 
   <!-- ====================== VENDORED LIBRARIES (all offline) ======================
        Only the small, always-needed libraries load at startup. The big ones
        (pdf.js, pdf-lib, jsPDF, SheetJS, docx, mammoth, JSZip, PptxGenJS,
        Chart.js) are loaded by js/libs.js the first time a tool needs them. -->
-  <script src="lib/marked.min.js"></script>     <!-- markdown rendering -->
-  <script src="lib/purify.min.js"></script>     <!-- DOMPurify: HTML sanitizer -->
+  <script src="lib/marked.min.js"
+          integrity="sha384-/TQbtLCAerC3jgaim+N78RZSDYV7ryeoBCVqTuzRrFec2akfBkHS7ACQ3PQhvMVi"></script>
+  <script src="lib/purify.min.js"
+          integrity="sha384-970c/BfwIJ5l1fTupCKSBbQnDmrX+sw9ry3QpG8IkcKILpmdJl4Ae+AFqAn8PRDI"></script>
 
   <!-- ====================== APP CODE ====================== -->
-  <script src="js/version.js"></script>
-  <script src="js/libs.js"></script>
-  <script src="js/storage.js"></script>
-  <script src="js/formula.js"></script>
-  <script src="js/docexport.js"></script>
-  <script src="js/texteditor.js"></script>
-  <script src="js/word.js"></script>
-  <script src="js/calc.js"></script>
-  <script src="js/impress.js"></script>
-  <script src="js/pdftools.js"></script>
-  <script src="js/markdown.js"></script>
-  <script src="js/app.js"></script>
+  <script src="js/version.js"
+          integrity="sha384-L9BiXvFgTr7llpgMzWyE46ahUThMdSpYgH++p2nH8NTgcncn9Q7Mr0wmUTE/NSHs"></script>
+  <script src="js/libs.js"
+          integrity="sha384-pnrL4vX9mMTr3rIjh7W8U8e9JWS7b2MxI9voq9v20S7V/HWi5kgH/uwBFEg/jhBD"></script>
+  <script src="js/storage.js"
+          integrity="sha384-OnfMNrrYE8Fs8sgqDTGGycky4lHm+fMfS9ywosFGAD9kpg/WgwLJyeamcrgqbaD9"></script>
+  <script src="js/formula.js"
+          integrity="sha384-PyVp+DMwW96ur/YXri8aY1BOLmaarezoW+6LpNzmOA1uPeuWKBmawRAEDgJfoZJQ"></script>
+  <script src="js/docexport.js"
+          integrity="sha384-bNacXyYtAHE4r5JBRRnNOD9/BASTUqaLVlHSrxROfZOi9oad/jUAZPXYzd1s/+8A"></script>
+  <script src="js/texteditor.js"
+          integrity="sha384-QeSrMGH7xcbo4EZSu2VdHHrFzAmHqF6h/w2b+sB/wdeKRxnKk5SGHriN8GxUA15C"></script>
+  <script src="js/word.js"
+          integrity="sha384-FtUtNW3AVNrwlhkrAMOFtwe9nYdPwkCWpUWXLU6UmSDUUqXr8fM1KqhMKrXKY3nq"></script>
+  <script src="js/calc.js"
+          integrity="sha384-pN+/hUwjVfteua53hdG45w3BtHxT3BJZxf19Xbs0DZ0wT1yCV47SXNN8l0w77Lk8"></script>
+  <script src="js/impress.js"
+          integrity="sha384-nekOx+6aLcosleifw5hmfclgCqgkmteHdQKzcz6A1o78xz7HvyJjHDA6YeqHppn3"></script>
+  <script src="js/pdftools.js"
+          integrity="sha384-BKgQaa9H0iCf2ZY2GuwOxuEN6NYeawfS4i4xcIRSl1gnGXvnNXExkA2LGmsgYEp6"></script>
+  <script src="js/markdown.js"
+          integrity="sha384-/++tby/lrQHBwU3Ym3KdpYog1Qo2ruwLvIjFfOxEo8xmXaLAcNoLerzlgjf8spvp"></script>
+  <script src="js/app.js"
+          integrity="sha384-NCbSqY0q/J68+a6sZg3NdNjWQGV9LzVrxUEVXpepa7XNGn3f8iDwd9+axAcxQT7g"></script>
 </body>
 </html>

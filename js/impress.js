@@ -256,12 +256,12 @@ const Impress = (() => {
         <div class="impress-sidebar" id="impSidebar">
           <div class="impress-sidehead">
             <span>Slides</span>
-            <button class="tb-btn icon-only" id="impAddSlide" title="Add slide">＋</button>
+            <button class="tb-btn icon-only" id="impAddSlide" title="Add slide" aria-label="Add slide">＋</button>
           </div>
-          <div class="impress-slidelist" id="impSlideList"></div>
+          <div class="impress-slidelist" id="impSlideList" role="listbox" aria-label="Slide list"></div>
         </div>
         <div class="impress-stage" id="impStage">
-          <div class="impress-canvas" id="impCanvas" tabindex="0"></div>
+          <div class="impress-canvas" id="impCanvas" tabindex="0" role="img" aria-label="Slide canvas"></div>
         </div>
         <div class="impress-inspector" id="impInspector"></div>
       </div>
@@ -285,7 +285,9 @@ const Impress = (() => {
     const btn = (label, fn, title, primary=false) => {
       const b = document.createElement('button');
       b.className = 'tb-btn' + (primary?' primary':'');
-      b.innerHTML = label; b.title = title || ''; b.onclick = fn; return b;
+      b.textContent = label; b.title = title || '';
+      if (title) b.setAttribute('aria-label', title);
+      b.onclick = fn; return b;
     };
     const sep = () => { const s=document.createElement('span'); s.className='tb-sep'; return s; };
 
@@ -324,15 +326,18 @@ const Impress = (() => {
       const item = document.createElement('div');
       item.className = 'impress-slideitem' + (i === current ? ' active' : '');
       item.dataset.idx = i;
+      item.setAttribute('role', 'option');
+      item.setAttribute('aria-selected', i === current ? 'true' : 'false');
+      item.setAttribute('aria-label', 'Slide ' + (i + 1));
       item.innerHTML = `
         <div class="impress-thumb"></div>
         <div class="impress-slidemeta">
           <span class="num">${i + 1}</span>
           <span style="flex:1"></span>
-          <button class="up" title="Move up">▲</button>
-          <button class="down" title="Move down">▼</button>
-          <button class="dup" title="Duplicate">⧉</button>
-          <button class="del" title="Delete">🗑</button>
+          <button class="up" title="Move up" aria-label="Move slide up">▲</button>
+          <button class="down" title="Move down" aria-label="Move slide down">▼</button>
+          <button class="dup" title="Duplicate" aria-label="Duplicate slide">⧉</button>
+          <button class="del" title="Delete" aria-label="Delete slide">🗑</button>
         </div>`;
       // Render thumbnail content
       const thumb = item.querySelector('.impress-thumb');

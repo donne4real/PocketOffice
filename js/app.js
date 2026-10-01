@@ -19,7 +19,10 @@
     if (!apps.includes(name)) return;
     currentApp = name;
     document.querySelectorAll('.app-tab').forEach(t => {
-      t.classList.toggle('active', t.dataset.app === name);
+      const isActive = t.dataset.app === name;
+      t.classList.toggle('active', isActive);
+      t.setAttribute('aria-selected', isActive ? 'true' : 'false');
+      t.setAttribute('tabindex', isActive ? '0' : '-1');
     });
     document.querySelectorAll('.tool-panel').forEach(p => {
       p.classList.toggle('active', p.dataset.app === name);
