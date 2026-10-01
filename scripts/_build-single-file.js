@@ -1,8 +1,8 @@
 // Builds PocketOffice-standalone.html: inlines css/ + js/ + lib/ into one file.
-// Usage:  node _build-single-file.js
+// Usage:  node scripts/_build-single-file.js
 const fs = require('fs');
 const path = require('path');
-const ROOT = __dirname;
+const ROOT = path.join(__dirname, '..');
 
 // Single source of truth for the version: js/version.js.
 const verSrc = fs.readFileSync(path.join(ROOT, 'js', 'version.js'), 'utf8');

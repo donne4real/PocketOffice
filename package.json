@@ -8,6 +8,6 @@
     "test": "node --test tests/formula.test.js tests/storage.test.js tests/docexport.test.js",
     "serve": "node tests/browser/serve.js . 8765",
     "test:browser": "node tests/browser/e2e.js",
-    "build": "node _build-single-file.js"
+    "build": "node scripts/_build-single-file.js"
   }
 }

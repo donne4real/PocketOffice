@@ -123,8 +123,11 @@ Tabs in every document tool can be **dragged to reorder**.
 ```
 PocketOffice/
 ├── index.html              ← double-click to launch
-├── start.bat               ← launcher (finds Edge/Chrome)
+├── start.bat / start.sh    ← launcher (finds Edge/Chrome)
 ├── README.md  START-HERE.txt  CHANGELOG.md  LICENSE
+├── scripts/                ← build tools (not needed at runtime)
+│   ├── _build-single-file.js   ← produces the standalone .html
+│   └── _gen-embedded-fonts.js  ← produces lib/embedded-fonts.js
 ├── samples/                ← .docx, .xlsx, .pptx to test with
 ├── tests/                  ← node --test unit tests + tests/browser/ checks
 ├── css/app.css             ← theme (light + dark) and every tool's styles
@@ -184,7 +187,7 @@ them on disk.
 Want everything inlined into one `.html` for email-friendly distribution?
 
 ```bash
-node _build-single-file.js
+node scripts/_build-single-file.js
 # → produces PocketOffice-standalone.html (~6 MB: every library, the fonts
 #    and the pdf.js worker embedded — truly one file)
 ```

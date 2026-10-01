@@ -56,10 +56,15 @@
   helpers. Total: 32 tests, 0 failures.
 
 ### Documentation
-- README: mentioned `start.sh`, added SheetJS CE commercial-license note.
+- README: mentioned `start.sh`, added SheetJS CE commercial-license note,
+  updated architecture diagram with `scripts/` directory.
 - CSS: fallback values before `var()` on critical properties; browser
   requirement documented in header comment.
 - `lib/VERSIONS.md`: documented SRI hash location in `libs.js`.
+
+### Housekeeping
+- Moved `_build-single-file.js` and `_gen-embedded-fonts.js` into `scripts/`.
+  Updated `package.json`, README, and `lib/VERSIONS.md` references.
 
 ## v2.0.0 — 2026-09-23
 

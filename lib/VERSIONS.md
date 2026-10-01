@@ -12,7 +12,7 @@ on-demand ones the first time a tool needs them).
 | `pdf.min.js` + `pdf.worker.min.js` | pdf.js | 3.11.174 | npm `pdfjs-dist` (`build/`) | PDF Tools |
 | `pdf-lib.min.js` | pdf-lib | unknown — not stamped in the file | npm `pdf-lib` | PDF Tools |
 | `jspdf.umd.min.js` | jsPDF | 2.5.2 | npm `jspdf` | PDF export |
-| `embedded-fonts.js` | Inter / Lora / JetBrains Mono subsets | generated | `_gen-embedded-fonts.js` | PDF export |
+| `embedded-fonts.js` | Inter / Lora / JetBrains Mono subsets | generated | `scripts/_gen-embedded-fonts.js` | PDF export |
 | `xlsx.full.min.js` | SheetJS CE | 0.20.3 | https://cdn.sheetjs.com/xlsx-0.20.3/ | Calc |
 | `docx.umd.js` | docx | unknown — not stamped in the file (API matches 8.x) | npm `docx` | Writer .docx export |
 | `mammoth.browser.js` | mammoth | unknown — not stamped in the file | npm `mammoth` | Writer .docx open |
@@ -37,7 +37,7 @@ on-demand ones the first time a tool needs them).
 
 1. Replace the file here and update this table.
 2. `node --test tests/*.test.js` and the browser checks in `tests/browser/`.
-3. `node _build-single-file.js` to refresh the standalone build.
+3. `node scripts/_build-single-file.js` to refresh the standalone build.
 
 ## Subresource Integrity (SRI)
 

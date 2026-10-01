@@ -4,12 +4,12 @@
 //     U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+2000-206F,U+20AC,U+2122,
 //     U+2190-2193,U+2212,U+2022" --layout-features="kern,liga,ccmp,locl" --no-hinting
 // Static instances come from Google Fonts (css2 API with a legacy UA).
-// Usage:  node _gen-embedded-fonts.js
+// Usage:  node scripts/_gen-embedded-fonts.js
 // Why a JS file instead of fetching the .ttf at runtime: fetch() is blocked on
 // file://, and PocketOffice must run from a USB stick with no server.
 const fs = require('fs');
 const path = require('path');
-const ROOT = __dirname;
+const ROOT = path.join(__dirname, '..');
 
 // file -> [family, jsPDF style]
 const MAP = [
