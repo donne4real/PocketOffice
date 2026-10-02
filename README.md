@@ -101,6 +101,12 @@ Just open **[donne4real.github.io/PocketOffice](https://donne4real.github.io/Poc
 > tool's libraries the first time you use that tool. Your documents are
 > processed locally in your browser either way.
 
+### Optional — add "Open with PocketOffice" to the right-click menu (Windows)
+
+Run `install-context-menu.bat` once as Administrator. After that, you can
+right-click any `.html` file and choose **Open with PocketOffice**. To
+remove, run `uninstall-context-menu.bat`.
+
 ## Keyboard shortcuts
 
 | Shortcut | Action |

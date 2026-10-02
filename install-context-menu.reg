@@ -1,0 +1,13 @@
+Windows Registry Editor Version 5.00
+
+; Adds "Open with PocketOffice" to the right-click menu for .html files.
+; Run this file once (double-click) to install. Run uninstall-context-menu.bat to remove.
+;
+; The path below uses a portable-friendly relative path via start.bat.
+; If you move the PocketOffice folder, re-run install-context-menu.bat to update.
+
+[HKEY_CLASSES_ROOT\htmlfile\shell\PocketOffice]
+@="Open with PocketOffice"
+
+[HKEY_CLASSES_ROOT\htmlfile\shell\PocketOffice\command]
+@="\"C:\\PocketOffice\\start.bat\" \"%1\""
