@@ -38,26 +38,3 @@ on-demand ones the first time a tool needs them).
 1. Replace the file here and update this table.
 2. `node --test tests/*.test.js` and the browser checks in `tests/browser/`.
 3. `node scripts/_build-single-file.js` to refresh the standalone build.
-
-## Subresource Integrity (SRI)
-
-Every script loaded at runtime carries a SHA-384 integrity hash. The static
-scripts (marked.min.js, purify.min.js, and all js/*.js) have `integrity`
-attributes in `index.html`. The dynamically loaded libraries in this folder
-(pdf.min.js, xlsx.full.min.js, etc.) have their hashes in the `SRI` map in
-`js/libs.js`.
-
-**When updating a library file, you must recompute its hash.** From the
-project root:
-
-```bash
-# PowerShell
-$hash = Get-FileHash -Path lib/FILE.js -Algorithm SHA384
-[Convert]::ToBase64String([byte[]]($hash.Hash -split '(..)' | Where-Object { $_ } | ForEach-Object { [Convert]::ToByte($_, 16) }))
-
-# macOS / Linux
-openssl dgst -sha384 -binary lib/FILE.js | openssl base64 -A
-```
-
-Then update the hash in `index.html` (for static scripts) or in the `SRI`
-map in `js/libs.js` (for dynamically loaded ones).
