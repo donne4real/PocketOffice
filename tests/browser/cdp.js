@@ -4,17 +4,26 @@ const path = require('path');
 const fs = require('fs');
 
 async function launch({ browser, port = 9333, profile }) {
+  if (typeof WebSocket === 'undefined') throw new Error(`Node 22+ is required (no global WebSocket in ${process.version})`);
   fs.rmSync(profile, { recursive: true, force: true });
   const proc = spawn(browser, [
     '--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`,
     '--no-first-run', '--no-default-browser-check', '--disable-extensions', '--window-size=1400,900', 'about:blank',
-  ], { stdio: 'ignore' });
-  let targets;
-  for (let i = 0; i < 50; i++) {
-    try { targets = await (await fetch(`http://127.0.0.1:${port}/json`)).json(); if (targets.find(t => t.type === 'page')) break; } catch (e) {}
-    await new Promise(r => setTimeout(r, 200));
+  ], { stdio: ['ignore', 'ignore', 'pipe'] });
+  // Keep the tail of the browser's stderr so a failed launch explains itself.
+  let stderr = '', exited = null;
+  proc.stderr.on('data', (d) => { stderr = (stderr + d).slice(-4000); });
+  proc.on('error', (e) => { exited = `could not be started: ${e.message}`; });
+  proc.on('exit', (code, signal) => { exited = exited || `exited early (code ${code}, signal ${signal})`; });
+  let page;
+  for (let i = 0; i < 150 && !page && !exited; i++) {
+    try { page = (await (await fetch(`http://127.0.0.1:${port}/json`)).json()).find(t => t.type === 'page'); } catch (e) {}
+    if (!page) await new Promise(r => setTimeout(r, 200));
   }
-  const page = targets.find(t => t.type === 'page');
+  if (!page) {
+    proc.kill();
+    throw new Error(`Browser ${exited || 'did not open a debuggable page within 30s'}: ${browser}\n--- browser stderr ---\n${stderr.trim() || '(empty)'}`);
+  }
   const ws = new WebSocket(page.webSocketDebuggerUrl);
   await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
   let id = 0;

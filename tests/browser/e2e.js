@@ -243,10 +243,10 @@ function check(name, ok, detail = '') { results.push({ name, ok: !!ok, detail })
       await T.sleep(400);
       const a = document.querySelector('#mdPreview a[href^="https"]');
       const img = document.querySelector('#mdPreview img');
-      return { target: a && a.target, onerr: img && img.hasAttribute('onerror'), js: !!document.querySelector('#mdPreview a[href^="javascript"]') };
+      return { target: a && a.target, onerr: img && img.hasAttribute('onerror'), js: !!document.querySelector('#mdPreview a[href^="javascript"]'), ran: !!window.MDPWN };
     });
     check('Markdown: links open in new tab', md.target === '_blank');
-    check('Markdown: handlers and javascript: links stripped', !md.onerr && !md.js, JSON.stringify(md));
+    check('Markdown: handlers and javascript: links stripped', !md.onerr && !md.js && !md.ran, JSON.stringify(md));
 
     // ---------- PDF ----------
     const pdf = await run(async () => {
@@ -326,7 +326,13 @@ function check(name, ok, detail = '') { results.push({ name, ok: !!ok, detail })
   } catch (e) {
     check('harness', false, e.stack || e.message);
   } finally {
-    const errs = b.errors.filter(e => !/favicon|8765\/x$/.test(e));
+    // The hostile-input tests above feed on*= attributes to the sanitizer on
+    // purpose. Chrome logs a CSP violation as soon as any parser (even
+    // DOMPurify's inert DOMParser document) sees one, so "inline event handler
+    // ... has been blocked" is the CSP doing its job, not an app error. Every
+    // other CSP violation (inline <script>, eval, remote loads) still fails.
+    const expectedCsp = /^LOG Executing inline event handler violates the following Content Security Policy directive .*The action has been blocked\./;
+    const errs = b.errors.filter(e => !/favicon|8765\/x$/.test(e) && !expectedCsp.test(e));
     check('no console errors or exceptions', errs.length === 0, errs.slice(0, 8).join('\n    '));
     await b.close();
     const failed = results.filter(r => !r.ok).length;

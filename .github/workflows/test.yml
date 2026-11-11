@@ -20,12 +20,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # The CDP driver uses the global WebSocket, which needs Node 22+.
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
-      - name: Install Chrome
-        uses: browser-actions/setup-chrome@v1
-        id: setup-chrome
+          node-version: 22
       - run: node tests/browser/serve.js . 8765 &
       - run: sleep 1
-      - run: node tests/browser/e2e.js "${{ steps.setup-chrome.outputs.chrome-path }}" http://127.0.0.1:8765/
+      # Use the runner's preinstalled Google Chrome: a Chromium snapshot unpacked
+      # into the tool cache has no AppArmor profile, so on ubuntu-24.04 its
+      # sandbox cannot start and the browser exits immediately.
+      - run: node tests/browser/e2e.js "$(command -v google-chrome)" http://127.0.0.1:8765/
