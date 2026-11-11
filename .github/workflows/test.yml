@@ -24,6 +24,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # PocketOffice-standalone.html is gitignored build output; the suite tests it.
+      - run: npm run build
       - run: node tests/browser/serve.js . 8765 &
       - run: sleep 1
       # Use the runner's preinstalled Google Chrome: a Chromium snapshot unpacked
