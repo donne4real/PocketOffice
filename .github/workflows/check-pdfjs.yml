@@ -1,0 +1,23 @@
+name: Check for a classic-script pdf.js build
+
+# PocketOffice is pinned to pdfjs-dist 3.11.174 because every later release
+# ships ES modules only, which don't load over file:// (see lib/VERSIONS.md).
+# That means it's still carrying the mitigated-but-unfixed CVE-2024-4367.
+# This runs monthly so that if pdf.js ever ships a classic build again for a
+# fixed version, someone finds out instead of the note in VERSIONS.md just
+# going stale.
+
+on:
+  schedule:
+    - cron: '0 9 1 * *'   # 1st of each month
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node scripts/check-pdfjs-build.js

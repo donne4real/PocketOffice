@@ -239,6 +239,24 @@ const FS = (() => {
    Tiny UI helpers shared across tools.
    -------------------------------------------------------------------------- */
 const UI = (() => {
+  // Shared toolbar-button builder. label renders as textContent unless
+  // opts.html is set (the four rich-formatting buttons in Writer need
+  // real markup); every other option here is optional.
+  function button(label, opts = {}) {
+    const b = document.createElement('button');
+    b.className = 'tb-btn' + (opts.primary ? ' primary' : '') + (opts.iconOnly ? ' icon-only' : '') + (opts.ghost ? ' ghost' : '');
+    if (opts.html) b.innerHTML = label; else b.textContent = label;
+    if (opts.title) { b.title = opts.title; b.setAttribute('aria-label', opts.title); }
+    if (opts.onClick) b.onclick = opts.onClick;
+    return b;
+  }
+
+  function sep() {
+    const s = document.createElement('span');
+    s.className = 'tb-sep';
+    return s;
+  }
+
   function toast(msg, kind = 'info', ms = 3200) {
     const root = document.getElementById('toasts');
     const el = document.createElement('div');
@@ -318,7 +336,7 @@ const UI = (() => {
     });
   }
 
-  return { toast, dialog, prompt, confirm };
+  return { button, sep, toast, dialog, prompt, confirm };
 })();
 
 /* --------------------------------------------------------------------------

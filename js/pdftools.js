@@ -31,17 +31,20 @@ const PdfTools = (() => {
   const $ = (id) => document.getElementById(id);
 
   function setControlsVisible(v) {
+    // Toggles the shared .hidden utility class rather than el.style.display:
+    // a literal style="" attribute (or setAttribute('style', …)) needs
+    // 'unsafe-inline' in the CSP style-src directive, but a class doesn't.
     for (const id of ['pdfClose','pdfNavSep','pdfPrev','pdfPageInfo','pdfNext','pdfZoomSep','pdfZoomOut','pdfZoomInfo','pdfZoomIn',
                       'pdfMergeBtn','pdfSplitBtn','pdfRotateBtn','pdfDeleteBtn','pdfTextBtn','pdfSignBtn','pdfSaveBtn','pdfSep2',
                       'pdfUndoBtn','pdfRedoBtn']) {
-      const el = $(id); if (el) el.style.display = v ? '' : 'none';
+      const el = $(id); if (el) el.classList.toggle('hidden', !v);
     }
-    const empty = $('pdfEmpty'); if (empty) empty.style.display = v ? 'none' : '';
-    const pages = $('pdfPages'); if (pages) pages.style.display = v ? 'flex' : 'none';
-    const docName = $('pdfDocName'); if (docName) { docName.style.display = v ? '' : 'none'; if (v) docName.textContent = fileName; }
-    const hint = $('pdfHint'); if (hint) hint.style.display = v ? 'none' : '';
+    const empty = $('pdfEmpty'); if (empty) empty.classList.toggle('hidden', v);
+    const pages = $('pdfPages'); if (pages) pages.classList.toggle('hidden', !v);
+    const docName = $('pdfDocName'); if (docName) { docName.classList.toggle('hidden', !v); if (v) docName.textContent = fileName; }
+    const hint = $('pdfHint'); if (hint) hint.classList.toggle('hidden', v);
     // The merge button is useful both with and without a doc; show it always.
-    if ($('pdfMergeBtn')) $('pdfMergeBtn').style.display = '';
+    if ($('pdfMergeBtn')) $('pdfMergeBtn').classList.remove('hidden');
   }
 
   // ---- Open ----
@@ -97,7 +100,7 @@ const PdfTools = (() => {
       const bar = document.createElement('div');
       bar.className = 'pdf-pagebar';
       bar.innerHTML = `<span class="pdf-pagelabel">Page ${display + 1}</span>
-        <span style="flex:1"></span>
+        <span class="flex-spacer"></span>
         <button class="tb-btn icon-only" data-act="up" title="Move up" aria-label="Move page up">▲</button>
         <button class="tb-btn icon-only" data-act="down" title="Move down" aria-label="Move page down">▼</button>
         <button class="tb-btn icon-only" data-act="rotate" title="Rotate 90°" aria-label="Rotate page">⟳</button>
@@ -245,9 +248,9 @@ const PdfTools = (() => {
     const body = document.createElement('div');
     body.style.minWidth = '320px';
     body.innerHTML = `
-      <p class="muted" style="margin:0 0 10px">Extract pages into a new PDF. Enter ranges like 1-3, 5, 8-10.</p>
+      <p class="muted mb-10">Extract pages into a new PDF. Enter ranges like 1-3, 5, 8-10.</p>
       <div class="row"><label>Pages</label><input type="text" id="splitRange" value="1-${pageOrder.length}"></div>
-      <p class="muted small" style="margin:0">Total pages: ${pageOrder.length}</p>`;
+      <p class="muted small m-0">Total pages: ${pageOrder.length}</p>`;
     UI.dialog({
       title: 'Split / extract pages', body, okText: 'Extract',
       onOk: async () => {
@@ -295,7 +298,7 @@ const PdfTools = (() => {
       <div class="row"><label>Y (pt)</label><input type="number" id="atY" value="72"></div>
       <div class="row"><label>Size</label><input type="number" id="atSize" value="14"></div>
       <div class="row"><label>Color</label><input type="text" id="atColor" value="#000000"></div>
-      <p class="muted small" style="margin:6px 0 0">Coordinates are from the top-left corner in points (1/72 inch). Letter page is 612×792.</p>`;
+      <p class="muted small mt-6">Coordinates are from the top-left corner in points (1/72 inch). Letter page is 612×792.</p>`;
     UI.dialog({
       title: 'Add text', body, okText: 'Add',
       onOk: async () => {
@@ -325,9 +328,9 @@ const PdfTools = (() => {
     const body = document.createElement('div');
     body.style.minWidth = '420px';
     body.innerHTML = `
-      <p class="muted" style="margin:0 0 8px">Draw your signature below, then place it on a page.</p>
-      <canvas id="sigCanvas" width="400" height="160" style="border:1px solid var(--border);border-radius:6px;background:#fff;cursor:crosshair;width:100%;touch-action:none"></canvas>
-      <div class="row" style="margin-top:8px"><label>Page</label><input type="number" id="sigPage" value="1" min="1" max="${pageOrder.length}"></div>
+      <p class="muted mb-8">Draw your signature below, then place it on a page.</p>
+      <canvas id="sigCanvas" width="400" height="160" class="sig-canvas"></canvas>
+      <div class="row mt-8"><label>Page</label><input type="number" id="sigPage" value="1" min="1" max="${pageOrder.length}"></div>
       <div class="row"><label>X (pt)</label><input type="number" id="sigX" value="72"></div>
       <div class="row"><label>Y (pt)</label><input type="number" id="sigY" value="72"></div>
       <div class="row"><label>Width (pt)</label><input type="number" id="sigW" value="200"></div>`;
@@ -510,5 +513,8 @@ const PdfTools = (() => {
     setControlsVisible(false);
   }
 
-  return { boot, undo: doUndo, redo: doRedo };
+  return { boot, undo: doUndo, redo: doRedo, parseRange };
 })();
+
+// Node (unit tests) can load the pure page-range parser from this file.
+if (typeof module !== 'undefined' && module.exports) module.exports = { parseRange: PdfTools.parseRange };

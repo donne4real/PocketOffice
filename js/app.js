@@ -49,12 +49,12 @@
 
   function showAbout() {
     const body = document.createElement('div');
-    body.style.cssText = 'line-height:1.6;font-size:13px;max-width:460px';
+    body.className = 'about-body';
     body.innerHTML = `
-      <p style="margin:0 0 10px"><b>PocketOffice v${PO_VERSION.version}</b> (${PO_VERSION.date}) — a tiny office suite that runs in your browser,
+      <p><b>PocketOffice v${PO_VERSION.version}</b> (${PO_VERSION.date}) — a tiny office suite that runs in your browser,
       with no install, no admin rights, and no internet.</p>
-      <p style="margin:0 0 10px"><b>What's inside</b></p>
-      <ul style="margin:0 0 10px; padding-left:22px">
+      <p><b>What's inside</b></p>
+      <ul>
         <li><b>Writer</b> — word processor (.docx/.pdf/.html)</li>
         <li><b>Calc</b> — spreadsheet with formulas and charts (.xlsx/.csv)</li>
         <li><b>Impress</b> — slides (.pptx/.pdf)</li>
@@ -62,9 +62,9 @@
         <li><b>PDF Tools</b> — view, merge, split, annotate, sign PDFs</li>
         <li><b>Markdown</b> — live-preview editor, print and HTML export</li>
       </ul>
-      <p class="muted" style="margin:0">All documents autosave to your browser's storage.
+      <p class="muted tight">All documents autosave to your browser's storage.
       Use the toolbar buttons to open and save real files.</p>
-      <p class="muted" style="margin:8px 0 0">Built with pdf.js, pdf-lib, jsPDF, SheetJS, docx, mammoth, PptxGenJS,
+      <p class="muted spaced">Built with pdf.js, pdf-lib, jsPDF, SheetJS, docx, mammoth, PptxGenJS,
       Chart.js, marked and DOMPurify (all bundled locally — see lib/VERSIONS.md).</p>
     `;
     UI.dialog({ title: 'About PocketOffice', body, okText: 'Close', cancelText: null });

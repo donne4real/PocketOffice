@@ -39,15 +39,8 @@ const MarkdownReader = (() => {
 
   function buildToolbar() {
     const tb = $('mdToolbar');
-    const btn = (label, fn, title, primary = false) => {
-      const b = document.createElement('button');
-      b.className = 'tb-btn' + (primary ? ' primary' : '');
-      b.textContent = label; b.title = title || '';
-      if (title) b.setAttribute('aria-label', title);
-      b.onclick = fn;
-      return b;
-    };
-    const sep = () => { const s = document.createElement('span'); s.className = 'tb-sep'; return s; };
+    const btn = (label, fn, title, primary = false) => UI.button(label, { title, primary, onClick: fn });
+    const sep = UI.sep;
     tb.innerHTML = '';
     tb.appendChild(btn('📂 Open', openDoc, 'Open .md / .markdown / .txt'));
     tb.appendChild(btn('💾 Save', () => saveDoc(false), 'Save (Ctrl+S)'));
@@ -193,9 +186,9 @@ const MarkdownReader = (() => {
     const body = document.createElement('div');
     body.style.cssText = 'min-width:240px';
     body.innerHTML = `
-      <p class="muted" style="margin:0 0 10px">Export the rendered document.</p>
-      <div style="display:flex;flex-direction:column;gap:6px">
-        <button class="tb-btn" data-x="html" style="justify-content:flex-start">🌐 Web page (.html)</button>
+      <p class="muted mb-10">Export the rendered document.</p>
+      <div class="menu-col">
+        <button class="tb-btn justify-start" data-x="html">🌐 Web page (.html)</button>
       </div>`;
     const d = UI.dialog({ title: 'Export', body, okText: 'Close', cancelText: null });
     d.el.querySelectorAll('[data-x]').forEach(b => b.onclick = () => { d.close(); doExport(b.dataset.x); });

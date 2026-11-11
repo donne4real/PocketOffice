@@ -452,6 +452,33 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: #1c1e
 .hidden { display: none !important; }
 .muted { color: var(--text-dim); }
 .small { font-size: 12px; }
+/* Replace a handful of one-off inline style="" attributes that used to live
+   in index.html — a literal style attribute needs 'unsafe-inline' in the
+   style-src CSP directive, these classes don't. (JS still toggles
+   .style.display directly on these elements at runtime; that's unaffected —
+   CSP's inline-style restriction only covers the style="" attribute itself.) */
+.flex-spacer, .flex-1 { flex: 1; }
+.mt-14 { margin-top: 14px; }
+.mt-8 { margin-top: 8px; }
+.mt-6 { margin: 6px 0 0; }
+.mb-8 { margin: 0 0 8px; }
+.mb-10 { margin: 0 0 10px; }
+.mb-12 { margin: 0 0 12px; }
+.m-0 { margin: 0; }
+.w-100 { width: 100%; }
+.text-danger { color: var(--danger); }
+.menu-col { display: flex; flex-direction: column; gap: 6px; }
+.flex-row { display: flex; gap: 8px; }
+.justify-start { justify-content: flex-start; }
+.find-input { width: 220px; }
+.pdf-pages-list { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+.chart-hint { margin: 4px 0 0 90px; }
+.sig-canvas { border: 1px solid var(--border); border-radius: 6px; background: #fff; cursor: crosshair; width: 100%; touch-action: none; }
+.about-body { line-height: 1.6; font-size: 13px; max-width: 460px; }
+.about-body p, .about-body ul { margin: 0 0 10px; }
+.about-body ul { padding-left: 22px; }
+.about-body p.tight { margin: 0; }
+.about-body p.spaced { margin: 8px 0 0; }
 
 /* ==========================================================================
    Writer (moved here from js/word.js in v2.0.0)

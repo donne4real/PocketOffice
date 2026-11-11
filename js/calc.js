@@ -8,7 +8,7 @@
 const Calc = (() => {
   const COLS = 100;       // A..CV
   const ROWS = 1000;
-  const ROW_CHUNK = 20;   // initial rows rendered (scroll loads more)
+  const INITIAL_ROWS = 20;   // rows rendered at grid build; scroll loads more via ROW_CHUNK below
   // Multi-sheet: each sheet owns { id, name, data, charts, activeCell }.
   // The live `data`/`charts`/`activeCell` bindings point at the active sheet;
   // all mutations go through them, so the sheet objects stay in sync.
@@ -100,7 +100,7 @@ const Calc = (() => {
     scrollBody.setAttribute('aria-label', 'Spreadsheet grid');
     wrap.appendChild(scrollBody);
     gridBody = scrollBody;
-    ensureRows(ROW_CHUNK);
+    ensureRows(INITIAL_ROWS);
 
     // Click + double-click + keyboard handlers
     scrollBody.addEventListener('click', onCellClick);
@@ -169,7 +169,7 @@ const Calc = (() => {
         </select></div>
       <div class="row"><label>Data range</label><input type="text" id="chRange" placeholder="e.g. A1:B5"></div>
       <div class="row"><label>Title</label><input type="text" id="chTitle" placeholder="(optional)"></div>
-      <p class="muted small" style="margin:4px 0 0 90px">Range should include a header row/column. First column = labels (for bar/line) or categories (pie); remaining columns = numeric series.</p>`;
+      <p class="muted small chart-hint">Range should include a header row/column. First column = labels (for bar/line) or categories (pie); remaining columns = numeric series.</p>`;
     if (editChart) {
       body.querySelector('#chType').value = editChart.type;
       body.querySelector('#chRange').value = editChart.range;
@@ -295,7 +295,7 @@ const Calc = (() => {
       panel.innerHTML = `
         <div class="calc-chart-head">
           <span class="calc-chart-title"></span>
-          <span style="flex:1"></span>
+          <span class="flex-spacer"></span>
           <button class="tb-btn icon-only" data-act="edit" title="Edit">⚙</button>
           <button class="tb-btn icon-only" data-act="close" title="Remove">✕</button>
         </div>
@@ -1021,18 +1021,12 @@ const Calc = (() => {
   function buildToolbar() {
     const tb = $('calcToolbar');
     tb.innerHTML = '';
-    const btn = (label, fn, title, primary=false) => {
-      const b = document.createElement('button');
-      b.className = 'tb-btn' + (primary?' primary':'');
-      b.textContent = label; b.title = title || '';
-      if (title) b.setAttribute('aria-label', title);
-      b.onclick = fn; return b;
-    };
+    const btn = (label, fn, title, primary=false) => UI.button(label, { title, primary, onClick: fn });
     tb.appendChild(btn('＋ New', newSheet, 'New blank sheet'));
     tb.appendChild(btn('📂 Open', importFile, 'Import .xlsx / .csv'));
     tb.appendChild(btn('💾 Export ▾', () => exportMenu(), 'Export'));
     tb.appendChild(btn('🖨️', () => printDoc(), 'Print'));
-    const sep = () => { const s = document.createElement('span'); s.className='tb-sep'; return s; };
+    const sep = UI.sep;
     tb.appendChild(sep());
     tb.appendChild(btn('↶', doUndo, 'Undo (Ctrl+Z)'));
     tb.appendChild(btn('↷', doRedo, 'Redo (Ctrl+Y)'));
@@ -1067,10 +1061,10 @@ const Calc = (() => {
     const body = document.createElement('div');
     body.style.cssText = 'min-width:240px';
     body.innerHTML = `
-      <div style="display:flex;flex-direction:column;gap:6px">
-        <button class="tb-btn" data-x="xlsx" data-scope="one" style="justify-content:flex-start">📊 Excel (.xlsx) — this sheet</button>
-        ${sheets.length > 1 ? `<button class="tb-btn" data-x="xlsx" data-scope="all" style="justify-content:flex-start">📚 Excel (.xlsx) — all ${sheets.length} open sheets</button>` : ''}
-        <button class="tb-btn" data-x="csv" data-scope="one" style="justify-content:flex-start">📄 CSV (.csv) — this sheet, values only</button>
+      <div class="menu-col">
+        <button class="tb-btn justify-start" data-x="xlsx" data-scope="one">📊 Excel (.xlsx) — this sheet</button>
+        ${sheets.length > 1 ? `<button class="tb-btn justify-start" data-x="xlsx" data-scope="all">📚 Excel (.xlsx) — all ${sheets.length} open sheets</button>` : ''}
+        <button class="tb-btn justify-start" data-x="csv" data-scope="one">📄 CSV (.csv) — this sheet, values only</button>
       </div>`;
     const d = UI.dialog({ title: 'Export spreadsheet', body, okText: 'Close', cancelText: null });
     d.el.querySelectorAll('[data-x]').forEach(b => b.onclick = () => { d.close(); exportFile(b.dataset.x, b.dataset.scope); });

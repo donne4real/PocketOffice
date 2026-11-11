@@ -39,16 +39,10 @@ const Writer = (() => {
       g.className = 'tb-group';
       items.forEach(i => g.appendChild(i));
       tb.appendChild(g);
-      const sep = document.createElement('span');
-      sep.className = 'tb-sep';
-      tb.appendChild(sep);
+      tb.appendChild(UI.sep());
     };
     const btn = (label, cmd, title, opts = {}) => {
-      const b = document.createElement('button');
-      b.className = 'tb-btn' + (opts.primary ? ' primary' : '') + (opts.iconOnly ? ' icon-only' : '');
-      if (opts.html) b.innerHTML = label; else b.textContent = label;
-      b.title = title || '';
-      if (title) b.setAttribute('aria-label', title);
+      const b = UI.button(label, { title, primary: opts.primary, iconOnly: opts.iconOnly, html: opts.html });
       b.onclick = () => { editor.focus(); run(cmd, opts.value); };
       return b;
     };
@@ -64,12 +58,8 @@ const Writer = (() => {
     ]);
 
     // Undo/redo
-    const undoBtn = document.createElement('button');
-    undoBtn.className = 'tb-btn icon-only'; undoBtn.textContent = '↶'; undoBtn.title = 'Undo (Ctrl+Z)'; undoBtn.setAttribute('aria-label', 'Undo');
-    undoBtn.onclick = () => { editor.focus(); doUndo(); };
-    const redoBtn = document.createElement('button');
-    redoBtn.className = 'tb-btn icon-only'; redoBtn.textContent = '↷'; redoBtn.title = 'Redo (Ctrl+Y)'; redoBtn.setAttribute('aria-label', 'Redo');
-    redoBtn.onclick = () => { editor.focus(); doRedo(); };
+    const undoBtn = UI.button('↶', { title: 'Undo (Ctrl+Z)', iconOnly: true, onClick: () => { editor.focus(); doUndo(); } });
+    const redoBtn = UI.button('↷', { title: 'Redo (Ctrl+Y)', iconOnly: true, onClick: () => { editor.focus(); doRedo(); } });
     group([undoBtn, redoBtn]);
 
     // Font + size
@@ -178,10 +168,10 @@ const Writer = (() => {
         const body = document.createElement('div');
         body.style.cssText = 'min-width:320px';
         body.innerHTML = `
-          <p class="muted" style="margin:0 0 12px">Insert an image from your computer or by URL.</p>
-          <div style="display:flex;gap:8px">
-            <button class="tb-btn primary" id="imgFile" style="flex:1">📂 From file…</button>
-            <button class="tb-btn" id="imgUrl" style="flex:1">🔗 From URL…</button>
+          <p class="muted mb-12">Insert an image from your computer or by URL.</p>
+          <div class="flex-row">
+            <button class="tb-btn primary flex-1" id="imgFile">📂 From file…</button>
+            <button class="tb-btn flex-1" id="imgUrl">🔗 From URL…</button>
           </div>`;
         const d = UI.dialog({ title: 'Insert image', body, okText: 'Cancel', cancelText: null });
         d.el.querySelector('[data-act=ok]').textContent = 'Close';
@@ -247,6 +237,59 @@ const Writer = (() => {
     });
   }
 
+  // Build the table as real DOM nodes with styles set via the .style property
+  // rather than an HTML string with style="" baked in. The border/padding
+  // need to be inline (not a CSS class) so the table still looks right when
+  // Writer exports to a standalone .html file, which carries no stylesheet —
+  // but a style="" attribute parsed out of a markup string needs
+  // 'unsafe-inline' in the CSP style-src directive, while the exact same
+  // attribute set via element.style.* does not, and still serializes into
+  // outerHTML/innerHTML identically. So build nodes, not markup.
+  function buildTable(rows, cols) {
+    const table = document.createElement('table');
+    table.style.borderCollapse = 'collapse';
+    table.style.border = '1px solid #888';
+    table.style.width = '100%';
+    for (let i = 0; i < rows; i++) {
+      const tr = document.createElement('tr');
+      for (let j = 0; j < cols; j++) {
+        const td = document.createElement('td');
+        td.style.border = '1px solid #888';
+        td.style.padding = '6px';
+        td.style.minWidth = '60px';
+        td.innerHTML = '&nbsp;';
+        tr.appendChild(td);
+      }
+      table.appendChild(tr);
+    }
+    return table;
+  }
+
+  // Insert a node at the current caret inside `editor` (or at its end if the
+  // selection isn't inside it), then place the caret in a fresh paragraph
+  // right after it.
+  function insertNodeInEditor(node) {
+    const sel = window.getSelection();
+    let range;
+    if (sel && sel.rangeCount && editor.contains(sel.getRangeAt(0).commonAncestorContainer)) {
+      range = sel.getRangeAt(0);
+    } else {
+      range = document.createRange();
+      range.selectNodeContents(editor);
+      range.collapse(false);
+    }
+    range.deleteContents();
+    range.insertNode(node);
+    const p = document.createElement('p');
+    p.innerHTML = '<br>';
+    node.after(p);
+    const after = document.createRange();
+    after.setStart(p, 0);
+    after.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(after);
+  }
+
   function insertTable() {
     const body = document.createElement('div');
     body.innerHTML = `<div class="row"><label>Rows</label><input type="number" id="tR" value="3" min="1" max="50"></div>
@@ -256,22 +299,8 @@ const Writer = (() => {
       onOk: () => {
         const r = +body.querySelector('#tR').value || 3;
         const c = +body.querySelector('#tC').value || 3;
-        let html = '<table style="border-collapse:collapse;border:1px solid #888;width:100%">';
-        for (let i = 0; i < r; i++) {
-          html += '<tr>';
-          for (let j = 0; j < c; j++) {
-            html += '<td style="border:1px solid #888;padding:6px;min-width:60px">&nbsp;</td>';
-          }
-          html += '</tr>';
-        }
-        html += '</table><p><br></p>';
         editor.focus();
-        if (typeof document.execCommand === 'function') {
-          document.execCommand('insertHTML', false, html);
-        } else {
-          // Fallback: insert at the end of the editor
-          editor.insertAdjacentHTML('beforeend', html);
-        }
+        insertNodeInEditor(buildTable(r, c));
         markDirty();
       }
     });
@@ -284,7 +313,7 @@ const Writer = (() => {
     body.innerHTML = `
       <div class="row"><label>Find</label><input type="text" id="frFind"></div>
       <div class="row"><label>Replace</label><input type="text" id="frRepl"></div>
-      <div class="actions" style="justify-content:flex-start;margin-top:8px">
+      <div class="actions justify-start mt-8">
         <button class="tb-btn" id="frNext">Find next</button>
         <button class="tb-btn" id="frOne">Replace</button>
         <button class="tb-btn primary" id="frAll">Replace all</button>
@@ -570,12 +599,12 @@ const Writer = (() => {
     const body = document.createElement('div');
     body.style.cssText = 'min-width:280px';
     body.innerHTML = `
-      <p class="muted" style="margin:0 0 10px">Export the current document to a downloadable file.</p>
-      <div style="display:flex;flex-direction:column;gap:6px">
-        <button class="tb-btn" data-x="docx" style="justify-content:flex-start">📄 Microsoft Word (.docx)</button>
-        <button class="tb-btn" data-x="pdf"  style="justify-content:flex-start">📕 PDF (.pdf)</button>
-        <button class="tb-btn" data-x="html" style="justify-content:flex-start">🌐 Web page (.html)</button>
-        <button class="tb-btn" data-x="txt"  style="justify-content:flex-start">📝 Plain text (.txt)</button>
+      <p class="muted mb-10">Export the current document to a downloadable file.</p>
+      <div class="menu-col">
+        <button class="tb-btn justify-start" data-x="docx">📄 Microsoft Word (.docx)</button>
+        <button class="tb-btn justify-start" data-x="pdf">📕 PDF (.pdf)</button>
+        <button class="tb-btn justify-start" data-x="html">🌐 Web page (.html)</button>
+        <button class="tb-btn justify-start" data-x="txt">📝 Plain text (.txt)</button>
       </div>`;
     const d = UI.dialog({ title: 'Export document', body, okText: 'Cancel', cancelText: null });
     d.el.querySelector('[data-act=ok]').textContent = 'Close';

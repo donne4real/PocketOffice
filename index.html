@@ -87,11 +87,11 @@
           <button class="tb-btn" id="teWordWrap" title="Toggle word wrap">↩ Wrap</button>
         </div>
         <div class="te-find" id="teFindBar">
-          <input type="text" id="teFindInput" placeholder="Find…" style="width:220px" />
+          <input type="text" id="teFindInput" placeholder="Find…" class="find-input" />
           <button class="tb-btn" id="teFindPrev" aria-label="Previous match">↑</button>
           <button class="tb-btn" id="teFindNext" aria-label="Next match">↓</button>
           <span class="tb-label" id="teFindCount"></span>
-          <span style="flex:1"></span>
+          <span class="flex-spacer"></span>
           <button class="icon-btn" id="teFindClose" aria-label="Close find bar">✕</button>
         </div>
         <div class="te-wrap">
@@ -107,28 +107,28 @@
       <section class="tool-panel" data-app="pdf" id="panel-pdf" role="tabpanel" aria-label="PDF Tools">
         <div class="toolbar" id="pdfToolbar">
           <button class="tb-btn primary" id="pdfOpen">📂 Open PDF…</button>
-          <button class="tb-btn ghost" id="pdfClose" style="display:none">✕ Close</button>
+          <button class="tb-btn ghost hidden" id="pdfClose">✕ Close</button>
           <span class="tb-sep"></span>
-          <span class="tb-label" id="pdfDocName" style="display:none"></span>
-          <span class="tb-sep" id="pdfNavSep" style="display:none"></span>
-          <button class="tb-btn icon-only" id="pdfPrev" style="display:none" title="First page" aria-label="First page">⏮</button>
-          <span class="tb-label" id="pdfPageInfo" style="display:none"></span>
-          <button class="tb-btn icon-only" id="pdfNext" style="display:none" title="Last page" aria-label="Last page">⏭</button>
-          <span class="tb-sep" id="pdfZoomSep" style="display:none"></span>
-          <button class="tb-btn icon-only" id="pdfZoomOut" style="display:none" title="Zoom out" aria-label="Zoom out">−</button>
-          <span class="tb-label" id="pdfZoomInfo" style="display:none">120%</span>
-          <button class="tb-btn icon-only" id="pdfZoomIn" style="display:none" title="Zoom in" aria-label="Zoom in">+</button>
-          <span class="tb-sep" id="pdfSep2" style="display:none"></span>
+          <span class="tb-label hidden" id="pdfDocName"></span>
+          <span class="tb-sep hidden" id="pdfNavSep"></span>
+          <button class="tb-btn icon-only hidden" id="pdfPrev" title="First page" aria-label="First page">⏮</button>
+          <span class="tb-label hidden" id="pdfPageInfo"></span>
+          <button class="tb-btn icon-only hidden" id="pdfNext" title="Last page" aria-label="Last page">⏭</button>
+          <span class="tb-sep hidden" id="pdfZoomSep"></span>
+          <button class="tb-btn icon-only hidden" id="pdfZoomOut" title="Zoom out" aria-label="Zoom out">−</button>
+          <span class="tb-label hidden" id="pdfZoomInfo">120%</span>
+          <button class="tb-btn icon-only hidden" id="pdfZoomIn" title="Zoom in" aria-label="Zoom in">+</button>
+          <span class="tb-sep hidden" id="pdfSep2"></span>
           <button class="tb-btn" id="pdfMergeBtn" title="Merge multiple PDFs into one">🔗 Merge</button>
-          <button class="tb-btn icon-only" id="pdfUndoBtn" style="display:none" title="Undo (Ctrl+Z)" aria-label="Undo">↶</button>
-          <button class="tb-btn icon-only" id="pdfRedoBtn" style="display:none" title="Redo (Ctrl+Y)" aria-label="Redo">↷</button>
-          <button class="tb-btn" id="pdfSplitBtn" style="display:none" title="Extract page range">✂ Split</button>
-          <button class="tb-btn" id="pdfRotateBtn" style="display:none" title="Rotate first page">⟳ Rotate</button>
-          <button class="tb-btn" id="pdfDeleteBtn" style="display:none" title="Delete a page">🗑 Delete</button>
-          <button class="tb-btn" id="pdfTextBtn" style="display:none" title="Add text">T Text</button>
-          <button class="tb-btn" id="pdfSignBtn" style="display:none" title="Sign by drawing">✍ Sign</button>
-          <button class="tb-btn primary" id="pdfSaveBtn" style="display:none">💾 Save</button>
-          <span style="flex:1"></span>
+          <button class="tb-btn icon-only hidden" id="pdfUndoBtn" title="Undo (Ctrl+Z)" aria-label="Undo">↶</button>
+          <button class="tb-btn icon-only hidden" id="pdfRedoBtn" title="Redo (Ctrl+Y)" aria-label="Redo">↷</button>
+          <button class="tb-btn hidden" id="pdfSplitBtn" title="Extract page range">✂ Split</button>
+          <button class="tb-btn hidden" id="pdfRotateBtn" title="Rotate first page">⟳ Rotate</button>
+          <button class="tb-btn hidden" id="pdfDeleteBtn" title="Delete a page">🗑 Delete</button>
+          <button class="tb-btn hidden" id="pdfTextBtn" title="Add text">T Text</button>
+          <button class="tb-btn hidden" id="pdfSignBtn" title="Sign by drawing">✍ Sign</button>
+          <button class="tb-btn primary hidden" id="pdfSaveBtn">💾 Save</button>
+          <span class="flex-spacer"></span>
           <span class="tb-label muted" id="pdfHint">100% offline · merge / split / reorder / annotate / sign</span>
         </div>
         <div class="pdf-wrap">
@@ -141,10 +141,10 @@
                   <button class="tb-btn primary" id="pdfEmptyOpen">📂 Open a PDF</button>
                   <button class="tb-btn" id="pdfEmptyMerge">🔗 Merge PDFs</button>
                 </div>
-                <p class="muted small" style="margin-top:14px">Honest limitation: editing existing text inside a PDF (rewriting words already in the file) isn't supported — even LibreOffice struggles with that. You can add text, signatures, images, and restructure pages freely.</p>
+                <p class="muted small mt-14">Honest limitation: editing existing text inside a PDF (rewriting words already in the file) isn't supported — even LibreOffice struggles with that. You can add text, signatures, images, and restructure pages freely.</p>
               </div>
             </div>
-            <div id="pdfPages" style="display:none; flex-direction:column; align-items:center; gap:14px;"></div>
+            <div id="pdfPages" class="hidden pdf-pages-list"></div>
           </div>
         </div>
       </section>

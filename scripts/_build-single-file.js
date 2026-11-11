@@ -2,6 +2,7 @@
 // Usage:  node scripts/_build-single-file.js
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const ROOT = path.join(__dirname, '..');
 
 // Single source of truth for the version: js/version.js.
@@ -57,9 +58,34 @@ function inlineFonts(html) {
   });
 }
 
+// index.html's CSP has no 'unsafe-inline'/hash in script-src and no 'data:'
+// in font-src, because the served app never needs either: scripts load from
+// sibling files and fonts from sibling .woff2 files. Inlining both for this
+// one-file build changes that, but 'unsafe-inline' on script-src would let
+// ANY injected <script> run (a much bigger blast radius than style-src ever
+// had) — and unlike style-src, every inline script here is fully known at
+// build time, so an exact 'sha256-…' allowlist is no harder to produce than
+// 'unsafe-inline' and keeps the same guarantee the served app has: only
+// script content this build actually wrote can execute.
+function patchCsp(html) {
+  const hashes = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)]
+    .map(([, body]) => "'sha256-" + crypto.createHash('sha256').update(body, 'utf8').digest('base64') + "'");
+  if (!hashes.length) throw new Error('No inline <script> blocks found to hash — did inlining run?');
+  return html
+    .replace(/script-src 'self';/, `script-src 'self' ${[...new Set(hashes)].join(' ')};`)
+    .replace(/font-src 'self';/, `font-src 'self' data:;`);
+}
+
 let html = inlineCss(srcHtml);
 html = inlineScripts(html);
 html = inlineFonts(html);
+// The HTML spec normalizes \r\n and lone \r to \n while parsing (including
+// inside <script> text), so a CSP script-src hash must be computed over the
+// same normalized text the browser sees — not the raw file bytes, which are
+// CRLF here (checked out with core.autocrlf=true on Windows). Normalize the
+// whole document once, before hashing, so what's hashed is what's served.
+html = html.replace(/\r\n?/g, '\n');
+html = patchCsp(html);
 const out = '<!-- PocketOffice ' + VERSION + ' standalone build -->\n' + html;
 const outFile = path.join(ROOT, 'PocketOffice-standalone.html');
 fs.writeFileSync(outFile, out);

@@ -282,14 +282,8 @@ const Impress = (() => {
   function buildToolbar() {
     const tb = $('impressToolbar');
     tb.innerHTML = '';
-    const btn = (label, fn, title, primary=false) => {
-      const b = document.createElement('button');
-      b.className = 'tb-btn' + (primary?' primary':'');
-      b.textContent = label; b.title = title || '';
-      if (title) b.setAttribute('aria-label', title);
-      b.onclick = fn; return b;
-    };
-    const sep = () => { const s=document.createElement('span'); s.className='tb-sep'; return s; };
+    const btn = (label, fn, title, primary=false) => UI.button(label, { title, primary, onClick: fn });
+    const sep = UI.sep;
 
     tb.appendChild(btn('＋ New', newPresentation, 'New presentation'));
     tb.appendChild(btn('📂 Open', openPresentation, 'Open .pptx or .json'));
@@ -333,7 +327,7 @@ const Impress = (() => {
         <div class="impress-thumb"></div>
         <div class="impress-slidemeta">
           <span class="num">${i + 1}</span>
-          <span style="flex:1"></span>
+          <span class="flex-spacer"></span>
           <button class="up" title="Move up" aria-label="Move slide up">▲</button>
           <button class="down" title="Move down" aria-label="Move slide down">▼</button>
           <button class="dup" title="Duplicate" aria-label="Duplicate slide">⧉</button>
@@ -579,12 +573,12 @@ const Impress = (() => {
           <label class="imp-check"><input type="checkbox" id="iBold" ${el.bold?'checked':''}> Bold</label>
           <label class="imp-check"><input type="checkbox" id="iItalic" ${el.italic?'checked':''}> Italic</label>
         </div>
-        <button class="tb-btn" id="iEditText" style="width:100%">✏ Edit text</button>
+        <button class="tb-btn w-100" id="iEditText">✏ Edit text</button>
       ` : ''}
       ${(el.kind === 'rect' || el.kind === 'ellipse') ? `
         <div class="imp-field"><label>Fill</label><input type="color" id="iFill" value="${Util.safeColor(el.fill, '#4a90e2')}"></div>
       ` : ''}
-      <button class="tb-btn" id="iDelete" style="width:100%;color:var(--danger)">🗑 Delete element</button>
+      <button class="tb-btn w-100 text-danger" id="iDelete">🗑 Delete element</button>
     `;
     const bindNum = (id, prop) => { const e = ins.querySelector(id); if (e) e.onchange = () => { el[prop] = +e.value; renderCanvas(); renderSlideList(); markDirty(); }; };
     bindNum('#iX','x'); bindNum('#iY','y'); bindNum('#iW','w'); bindNum('#iH','h');
@@ -1053,9 +1047,9 @@ const Impress = (() => {
     const body = document.createElement('div');
     body.style.cssText = 'min-width:240px';
     body.innerHTML = `
-      <div style="display:flex;flex-direction:column;gap:6px">
-        <button class="tb-btn" data-x="pptx" style="justify-content:flex-start">📽️ PowerPoint (.pptx)</button>
-        <button class="tb-btn" data-x="pdf"  style="justify-content:flex-start">📕 PDF (.pdf)</button>
+      <div class="menu-col">
+        <button class="tb-btn justify-start" data-x="pptx">📽️ PowerPoint (.pptx)</button>
+        <button class="tb-btn justify-start" data-x="pdf">📕 PDF (.pdf)</button>
       </div>`;
     const d = UI.dialog({ title: 'Export presentation', body, okText: 'Close', cancelText: null });
     d.el.querySelectorAll('[data-x]').forEach(b => b.onclick = () => { d.close(); doExport(b.dataset.x); });
@@ -1205,5 +1199,10 @@ const Impress = (() => {
     setTimeout(() => $('impCanvas') && $('impCanvas').focus(), 0);
   }
 
-  return { boot, onActivate, flush, undo: doUndo, redo: doRedo, reopen: reopenDeck };
+  return { boot, onActivate, flush, undo: doUndo, redo: doRedo, reopen: reopenDeck, normalizeSlides, ensureElementIds };
 })();
+
+// Node (unit tests) can load the pure deck-sanitizing helpers from this file.
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { normalizeSlides: Impress.normalizeSlides, ensureElementIds: Impress.ensureElementIds };
+}

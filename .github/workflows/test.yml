@@ -1,0 +1,31 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm test
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install Chrome
+        uses: browser-actions/setup-chrome@v1
+        id: setup-chrome
+      - run: node tests/browser/serve.js . 8765 &
+      - run: sleep 1
+      - run: node tests/browser/e2e.js "${{ steps.setup-chrome.outputs.chrome-path }}" http://127.0.0.1:8765/

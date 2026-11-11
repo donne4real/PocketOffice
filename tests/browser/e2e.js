@@ -49,7 +49,10 @@ function check(name, ok, detail = '') { results.push({ name, ok: !!ok, detail })
     check('version shown from version.js', boot.ver.includes('2.0.0'), boot.ver);
     check('big libraries not loaded at startup', boot.lazy);
     check('DOMPurify loaded', boot.purify);
-    check('Calc grid starts small (20 rows)', boot.cells === 20 * 100, boot.cells + ' cells');
+    // 21 rows, not 20: setActive('A1') during boot also pre-renders a 20-row
+    // lookahead past the active cell (js/calc.js setActive) for smooth arrow-key
+    // navigation. Still far below the old 100-row/10,000-cell startup grid.
+    check('Calc grid starts small (21 rows)', boot.cells === 21 * 100, boot.cells + ' cells');
 
     // ---------- Calc ----------
     const calc = await run(async () => {
