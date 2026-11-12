@@ -24,19 +24,73 @@ const Storage = (() => {
     });
   }
 
-  // Save a document object under a key like "writer:Untitled" or "text:notes.md"
-  async function save(key, value) {
-    const db = await open();
+  let frozen = false;   // set while a restore is replacing everything
+
+  // Tell the shell an autosave could not be written (full disk, wiped
+  // profile, storage blocked by policy…) so the user is not left thinking
+  // their work is safe. DataCloneError is expected and retried by callers.
+  function report(e) {
+    if (!e || e.name === 'DataCloneError' || typeof window === 'undefined') return;
+    try { window.dispatchEvent(new CustomEvent('po:storage-error', { detail: { name: e.name || 'Error', message: e.message || '' } })); } catch (err) { /* ignore */ }
+  }
+
+  function put(db, records, clearFirst) {
     return new Promise((resolve, reject) => {
       const tx = db.transaction(STORE, 'readwrite');
-      tx.objectStore(STORE).put({
-        key,
-        value,
-        updatedAt: Date.now(),
-      });
+      const store = tx.objectStore(STORE);
+      if (clearFirst) store.clear();
+      for (const r of records) store.put(r);
       tx.oncomplete = () => resolve(true);
       tx.onerror = () => reject(tx.error);
+      // A full disk usually surfaces as an abort (QuotaExceededError), not an error.
+      tx.onabort = () => reject(tx.error || new Error('Storage write was aborted'));
     });
+  }
+
+  // Save a document object under a key like "writer:Untitled" or "text:notes.md"
+  async function save(key, value) {
+    if (frozen) return true;
+    try {
+      const db = await open();
+      return await put(db, [{ key, value, updatedAt: Date.now() }], false);
+    } catch (e) {
+      report(e);
+      throw e;
+    }
+  }
+
+  // Replace the whole store (restore from a backup). After this, further
+  // saves are ignored: the page is about to reload, and a late autosave of
+  // the old in-memory documents must not overwrite what was just restored.
+  async function replaceAll(records) {
+    const db = await open();
+    frozen = true;
+    try {
+      return await put(db, records.map(r => ({ key: r.key, value: r.value, updatedAt: r.updatedAt || Date.now() })), true);
+    } catch (e) {
+      frozen = false;
+      throw e;
+    }
+  }
+
+  // Browser storage facts: bytes used, quota, and whether the browser has
+  // promised not to evict this data when the disk runs low.
+  async function health() {
+    const out = { usage: null, quota: null, persisted: null };
+    try {
+      const ns = navigator.storage;
+      if (ns && ns.estimate) { const e = await ns.estimate(); out.usage = e.usage; out.quota = e.quota; }
+      if (ns && ns.persisted) out.persisted = await ns.persisted();
+    } catch (e) { /* not available (old browser, some file:// setups) */ }
+    return out;
+  }
+  // Ask the browser to keep our data (no prompt in Chromium; it decides).
+  async function requestPersist() {
+    try {
+      const ns = navigator.storage;
+      if (!ns || !ns.persist) return null;
+      return (await ns.persisted()) || (await ns.persist());
+    } catch (e) { return null; }
   }
 
   async function load(key) {
@@ -74,7 +128,7 @@ const Storage = (() => {
     });
   }
 
-  return { open, save, load, remove, list };
+  return { open, save, load, remove, list, replaceAll, health, requestPersist };
 })();
 
 /* --------------------------------------------------------------------------
@@ -271,33 +325,84 @@ const UI = (() => {
     }, ms);
   }
 
+  // Give every <label> that sits beside a single form control a proper
+  // for/id link, so screen readers announce the field's name. Lets callers
+  // keep writing plain <label>Rows</label><input …> markup.
+  let fieldSeq = 0;
+  function linkLabels(root) {
+    root.querySelectorAll('label').forEach(label => {
+      if (label.htmlFor || label.querySelector('input, select, textarea')) return;
+      const control = label.parentElement && label.parentElement.querySelector('input, select, textarea');
+      if (!control) return;
+      if (!control.id) control.id = 'po-field-' + (++fieldSeq);
+      label.htmlFor = control.id;
+    });
+  }
+
+  const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+  let dialogSeq = 0;
+
+  // A modal dialog. Keyboard: focus starts inside, Tab stays inside, Escape
+  // cancels, and focus returns to where it was when the dialog closes.
   function dialog({ title, body, okText = 'OK', cancelText = 'Cancel', onOk, onCancel }) {
     const root = document.getElementById('dialogRoot');
+    const opener = document.activeElement;
     const back = document.createElement('div');
     back.className = 'dialog-backdrop';
     const dlg = document.createElement('div');
+    const titleId = 'dialog-title-' + (++dialogSeq);
     dlg.className = 'dialog';
     dlg.setAttribute('role', 'dialog');
     dlg.setAttribute('aria-modal', 'true');
-    dlg.setAttribute('aria-labelledby', 'dialog-title');
-    dlg.innerHTML = `<h3 id="dialog-title"></h3><div class="dialog-body"></div>
+    dlg.setAttribute('aria-labelledby', titleId);
+    dlg.innerHTML = `<h3></h3><div class="dialog-body"></div>
       <div class="actions">
         <button class="tb-btn ghost" data-act="cancel"></button>
         <button class="tb-btn primary" data-act="ok"></button>
       </div>`;
+    dlg.querySelector('h3').id = titleId;
     dlg.querySelector('h3').textContent = title;
     dlg.querySelector('.dialog-body').appendChild(body);
     dlg.querySelector('[data-act=cancel]').textContent = cancelText;
     dlg.querySelector('[data-act=ok]').textContent = okText;
+    // A dialog with no Cancel (cancelText: null) should not leave an empty,
+    // unlabeled button in the tab order.
+    if (cancelText == null || cancelText === '') dlg.querySelector('[data-act=cancel]').hidden = true;
+    linkLabels(dlg);
     back.appendChild(dlg);
     root.appendChild(back);
-    const close = () => back.remove();
-    dlg.querySelector('[data-act=cancel]').onclick = () => { close(); onCancel && onCancel(); };
+    let closed = false;
+    const close = () => {
+      if (closed) return;
+      closed = true;
+      back.remove();
+      // Hand focus back, unless the caller already moved it somewhere useful.
+      const a = document.activeElement;
+      if ((!a || a === document.body) && opener && opener.isConnected && typeof opener.focus === 'function') {
+        try { opener.focus({ preventScroll: true }); } catch (e) { /* ignore */ }
+      }
+    };
+    const cancel = () => { if (closed) return; close(); onCancel && onCancel(); };
+    dlg.querySelector('[data-act=cancel]').onclick = cancel;
     dlg.querySelector('[data-act=ok]').onclick = async () => {
       if (onOk) { const r = await onOk(dlg); if (r !== false) close(); }
       else close();
     };
-    back.addEventListener('mousedown', (e) => { if (e.target === back) { close(); onCancel && onCancel(); } });
+    back.addEventListener('mousedown', (e) => { if (e.target === back) cancel(); });
+    back.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancel(); return; }
+      if (e.key !== 'Tab') return;
+      const items = [...dlg.querySelectorAll(FOCUSABLE)].filter(n => !n.disabled && !n.hidden && n.offsetParent !== null);
+      if (!items.length) { e.preventDefault(); return; }
+      const first = items[0], last = items[items.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+      else if (!dlg.contains(document.activeElement)) { e.preventDefault(); first.focus(); }
+    });
+    // Start on the first field, or on the main button when there is none.
+    const start = dlg.querySelector('.dialog-body input:not([type=hidden]), .dialog-body select, .dialog-body textarea') ||
+      dlg.querySelector('.dialog-body button') || dlg.querySelector('[data-act=ok]');
+    try { start.focus({ preventScroll: true }); } catch (e) { /* ignore */ }
     return { close, el: dlg };
   }
 
@@ -336,7 +441,7 @@ const UI = (() => {
     });
   }
 
-  return { button, sep, toast, dialog, prompt, confirm };
+  return { button, sep, toast, dialog, prompt, confirm, linkLabels };
 })();
 
 /* --------------------------------------------------------------------------
@@ -582,6 +687,11 @@ const Tabs = (() => {
     strip.setAttribute('aria-label', 'Document tabs');
     mount.appendChild(strip);
     let dragId = null;
+    // The strip is rebuilt on every render; put focus back on the same tab.
+    const refocus = (id) => {
+      const t = [...strip.querySelectorAll('.te-tab')].find(n => n.dataset.tabId === id);
+      if (t) t.focus();
+    };
     const clearOver = () => strip.querySelectorAll('.drag-over').forEach(n => n.classList.remove('drag-over'));
     // Let the strip itself absorb stray drops (drops on the gaps between
     // tabs would otherwise be treated as a URL drop by the browser).
@@ -633,6 +743,27 @@ const Tabs = (() => {
         x.onclick = (e) => { e.stopPropagation(); onClose(d.id); };
         t.appendChild(x);
         t.onclick = () => { if (d.id !== activeId) onActivate(d.id); };
+        // Keyboard: arrows move between tabs, Enter/Space opens one, Delete closes it.
+        t.addEventListener('keydown', (e) => {
+          if (e.target !== t) return;
+          const all = [...strip.querySelectorAll('.te-tab')];
+          const i = all.indexOf(t);
+          if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+            e.preventDefault();
+            const next = all[(i + (e.key === 'ArrowRight' ? 1 : all.length - 1)) % all.length];
+            if (next) next.focus();
+          } else if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            if (d.id !== activeId) { onActivate(d.id); refocus(d.id); }
+          } else if (e.key === 'Delete') {
+            e.preventDefault();
+            onClose(d.id);
+          }
+        });
+        t.dataset.tabId = d.id;
+        // Every tab can take focus; only the active one is in the Tab order.
+        if (!isActive) t.addEventListener('focus', () => t.setAttribute('tabindex', '0'));
+        if (!isActive) t.addEventListener('blur', () => t.setAttribute('tabindex', '-1'));
         strip.appendChild(t);
       });
       const plus = document.createElement('button');
@@ -698,6 +829,132 @@ const PdfFonts = (() => {
   return { register, pick };
 })();
 
+/* --------------------------------------------------------------------------
+   Backup — everything PocketOffice keeps in the browser, as one .zip.
+   The zip holds pocketoffice-backup.json (what Restore reads back) plus
+   readable copies of each document, so the files are useful even without
+   PocketOffice. Browser storage can be wiped by the browser, by IT policy
+   or by a profile reset; a backup on disk cannot.
+   -------------------------------------------------------------------------- */
+const Backup = (() => {
+  const DATA_FILE = 'pocketoffice-backup.json';
+  const KEY_RE = /^[a-z]{2,20}:[\w.:\- ]{1,120}$/i;
+  const MAX_BYTES = 300 * 1024 * 1024;
+
+  const safeName = (s, fallback) => (String(s || '').replace(/[\\/:*?"<>|\u0000-\u001f]/g, ' ').trim() || fallback).slice(0, 80);
+  // File handles cannot be written to JSON; everything else is plain data.
+  const plain = (v) => JSON.parse(JSON.stringify(v, (k, val) => (k === 'handle' ? null : val)));
+  const withExt = (name, ext) => /\.[a-z0-9]{1,5}$/i.test(name) ? name : name + '.' + ext;
+
+  // Raw cell text as CSV (formulas kept as typed).
+  function cellsToCsv(cells) {
+    let maxR = -1, maxC = -1;
+    const grid = new Map();
+    for (const addr of Object.keys(cells || {})) {
+      const a = Formula.parseAddr(addr);
+      if (!a) continue;
+      maxR = Math.max(maxR, a.row); maxC = Math.max(maxC, a.col);
+      grid.set(a.row + ':' + a.col, String(cells[addr] ?? ''));
+    }
+    const lines = [];
+    for (let r = 0; r <= maxR; r++) {
+      const row = [];
+      for (let c = 0; c <= maxC; c++) {
+        const v = grid.get(r + ':' + c) || '';
+        row.push(/[",\r\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v);
+      }
+      lines.push(row.join(','));
+    }
+    return lines.join('\r\n');
+  }
+
+  // Human-readable copies: [{ path, content }].
+  function readableCopies(get) {
+    const out = [];
+    const used = new Set();
+    const add = (folder, name, content) => {
+      let path = folder + '/' + name, n = 2;
+      while (used.has(path.toLowerCase())) path = folder + '/' + name.replace(/(\.[^.]*)?$/, ' (' + (n++) + ')$1');
+      used.add(path.toLowerCase());
+      out.push({ path, content });
+    };
+    const esc = (s) => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const w = get('writer:docs');
+    for (const d of (w && Array.isArray(w.docs) ? w.docs : [])) {
+      const name = safeName(d.name, 'document').replace(/\.(docx?|txt)$/i, '') ;
+      add('Writer', withExt(name, 'html').replace(/\.htm$/i, '.html'),
+        '<!DOCTYPE html>\n<html><head><meta charset="utf-8"><title>' + esc(name) + '</title></head><body>\n' + (d.html || '') + '\n</body></html>');
+    }
+    const t = get('texteditor:session');
+    for (const b of (t && Array.isArray(t.buffers) ? t.buffers : [])) add('Text Editor', withExt(safeName(b.name, 'untitled'), 'txt'), String(b.text ?? ''));
+    const m = get('markdown:doc');
+    if (m && typeof m.source === 'string' && m.source.trim()) add('Markdown', withExt(safeName(m.name, 'document'), 'md'), m.source);
+    const c = get('calc:sheets');
+    for (const s of (c && Array.isArray(c.sheets) ? c.sheets : [])) {
+      const csv = cellsToCsv(s.cells);
+      if (csv) add('Calc', safeName(s.name, 'sheet') + '.csv', csv);
+    }
+    const i = get('impress:decks');
+    for (const d of (i && Array.isArray(i.decks) ? i.decks : [])) {
+      add('Impress', safeName(d.name, 'deck') + '.json', JSON.stringify({ slides: d.slides || [] }, null, 2));
+    }
+    return out;
+  }
+
+  // Build the backup. Returns { bytes, name, documents }.
+  async function create() {
+    await Libs.need('jszip');
+    const records = (await Storage.list())
+      .filter(r => typeof r.key === 'string' && !r.key.startsWith('fs:'))
+      .map(r => ({ key: r.key, value: plain(r.value), updatedAt: r.updatedAt }));
+    const zip = new window.JSZip();
+    const created = new Date();
+    zip.file(DATA_FILE, JSON.stringify({ app: 'PocketOffice', format: 1, version: PO_VERSION.version, created: created.toISOString(), records }));
+    const get = (key) => (records.find(r => r.key === key) || {}).value;
+    const copies = readableCopies(get);
+    for (const f of copies) zip.file(f.path, f.content);
+    zip.file('README.txt',
+      'PocketOffice backup, made ' + created.toLocaleString() + '\r\n\r\n' +
+      'To restore everything: open PocketOffice, click the Backup button (top right),\r\n' +
+      'choose "Restore from a backup" and pick this .zip file.\r\n\r\n' +
+      'The folders hold ordinary copies of each document (.html, .txt, .md, .csv, .json)\r\n' +
+      'that open in any program. Calc copies are CSV, so they keep the cell contents\r\n' +
+      'and formulas but not the formatting or charts - Restore brings those back.\r\n');
+    const bytes = await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' });
+    const stamp = created.getFullYear() + '-' + String(created.getMonth() + 1).padStart(2, '0') + '-' + String(created.getDate()).padStart(2, '0');
+    return { bytes, name: 'PocketOffice-backup-' + stamp + '.zip', documents: copies.length };
+  }
+
+  // Read a backup zip and return its records, validated. Throws if it is
+  // not a PocketOffice backup.
+  async function read(bytes) {
+    if (!bytes || bytes.length > MAX_BYTES) throw new Error('That file is too large to be a PocketOffice backup.');
+    await Libs.need('jszip');
+    let zip;
+    try { zip = await window.JSZip.loadAsync(bytes); } catch (e) { throw new Error('That file is not a .zip backup.'); }
+    const entry = zip.file(DATA_FILE);
+    if (!entry) throw new Error('No ' + DATA_FILE + ' inside — this is not a PocketOffice backup.');
+    let data;
+    try { data = JSON.parse(await entry.async('string')); } catch (e) { throw new Error('The backup data is damaged.'); }
+    if (!data || data.app !== 'PocketOffice' || !Array.isArray(data.records)) throw new Error('This is not a PocketOffice backup.');
+    const records = [];
+    for (const r of data.records) {
+      if (!r || typeof r.key !== 'string' || !KEY_RE.test(r.key) || r.key.startsWith('fs:') || r.value == null) continue;
+      const rec = { key: r.key, value: r.value, updatedAt: typeof r.updatedAt === 'number' ? r.updatedAt : Date.now() };
+      // A backup is a file from outside: clean Writer's HTML like any opened file.
+      if (rec.key === 'writer:docs' && rec.value && Array.isArray(rec.value.docs)) {
+        rec.value.docs = rec.value.docs.filter(d => d && typeof d === 'object')
+          .map(d => Object.assign({}, d, { html: Sanitize.html(String(d.html || '')), handle: null }));
+      }
+      records.push(rec);
+    }
+    if (!records.length) throw new Error('The backup holds no documents.');
+    return { records, created: typeof data.created === 'string' ? data.created : '', version: String(data.version || '') };
+  }
+
+  return { create, read, cellsToCsv, DATA_FILE };
+})();
+
 // Node (unit tests) can load the pure helpers from this file.
-if (typeof module !== 'undefined' && module.exports) module.exports = { Util, History };
+if (typeof module !== 'undefined' && module.exports) module.exports = { Util, History, Backup };
 

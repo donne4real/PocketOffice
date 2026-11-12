@@ -16,15 +16,20 @@
                  form-action 'self';
                  frame-src 'none'" />
   <title>PocketOffice</title>
+  <meta name="description" content="An office suite that runs in your browser: no install, no admin rights, no internet." />
+  <meta name="theme-color" content="#1668e6" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
   <link rel="stylesheet" href="css/app.css" />
   <link rel="stylesheet" href="css/fonts.css" />
 </head>
 <body>
   <div id="app">
     <!-- ====================== APP TAB STRIP ====================== -->
-    <header class="app-tabs" role="tablist" aria-label="Application tabs">
+    <header class="app-tabs" role="tablist" aria-label="Tools">
       <div class="brand">
-        <div class="brand-logo">P</div>
+        <div class="brand-logo" aria-hidden="true">P</div>
         <div class="brand-name">PocketOffice</div>
       </div>
 
@@ -36,6 +41,7 @@
       <button class="app-tab" data-app="markdown" role="tab" aria-selected="false" aria-controls="panel-markdown"><span class="ico" aria-hidden="true">📖</span>Markdown</button>
 
       <div class="tab-spacer"></div>
+      <button class="icon-btn" id="backupBtn" title="Backup &amp; storage" aria-label="Backup and storage">🛟</button>
       <button class="icon-btn" id="themeToggle" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
       <button class="icon-btn" id="aboutBtn" title="About" aria-label="About PocketOffice">ⓘ</button>
     </header>
@@ -66,12 +72,12 @@
       <!-- ====================== TEXT EDITOR ====================== -->
       <section class="tool-panel active" data-app="text" id="panel-text" role="tabpanel" aria-label="Text Editor">
         <div class="toolbar" id="teToolbar">
-          <button class="tb-btn" id="teNew">＋ New</button>
-          <button class="tb-btn" id="teOpen">📂 Open…</button>
-          <button class="tb-btn primary" id="teSave">💾 Save</button>
+          <button class="tb-btn" id="teNew" aria-label="New file">＋ New</button>
+          <button class="tb-btn" id="teOpen" aria-label="Open file">📂 Open…</button>
+          <button class="tb-btn primary" id="teSave" aria-label="Save (Ctrl+S)">💾 Save</button>
           <button class="tb-btn" id="teSaveAs">Save As…</button>
           <span class="tb-sep"></span>
-          <span class="tb-label">Mode</span>
+          <label class="tb-label" for="teMode">Mode</label>
           <select class="tb-select" id="teMode">
             <option value="txt">Plain text (.txt)</option>
             <option value="md">Markdown (.md)</option>
@@ -83,11 +89,11 @@
             <option value="ini">Config (.ini)</option>
           </select>
           <span class="tb-sep"></span>
-          <button class="tb-btn" id="teFind">🔍 Find</button>
-          <button class="tb-btn" id="teWordWrap" title="Toggle word wrap">↩ Wrap</button>
+          <button class="tb-btn" id="teFind" aria-label="Find">🔍 Find</button>
+          <button class="tb-btn" id="teWordWrap" title="Toggle word wrap" aria-label="Toggle word wrap">↩ Wrap</button>
         </div>
         <div class="te-find" id="teFindBar">
-          <input type="text" id="teFindInput" placeholder="Find…" class="find-input" />
+          <input type="text" id="teFindInput" placeholder="Find…" class="find-input" aria-label="Find in file" />
           <button class="tb-btn" id="teFindPrev" aria-label="Previous match">↑</button>
           <button class="tb-btn" id="teFindNext" aria-label="Next match">↓</button>
           <span class="tb-label" id="teFindCount"></span>
@@ -97,7 +103,7 @@
         <div class="te-wrap">
           <div class="te-tabs" id="teTabs"></div>
           <div class="te-editor">
-            <div class="te-gutter" id="teGutter"></div>
+            <div class="te-gutter" id="teGutter" aria-hidden="true"></div>
             <textarea class="te-textarea" id="teTextarea" spellcheck="false" wrap="off" aria-label="Text editor content"></textarea>
           </div>
         </div>
@@ -106,8 +112,8 @@
       <!-- ====================== PDF TOOLS ====================== -->
       <section class="tool-panel" data-app="pdf" id="panel-pdf" role="tabpanel" aria-label="PDF Tools">
         <div class="toolbar" id="pdfToolbar">
-          <button class="tb-btn primary" id="pdfOpen">📂 Open PDF…</button>
-          <button class="tb-btn ghost hidden" id="pdfClose">✕ Close</button>
+          <button class="tb-btn primary" id="pdfOpen" aria-label="Open PDF">📂 Open PDF…</button>
+          <button class="tb-btn ghost hidden" id="pdfClose" aria-label="Close PDF">✕ Close</button>
           <span class="tb-sep"></span>
           <span class="tb-label hidden" id="pdfDocName"></span>
           <span class="tb-sep hidden" id="pdfNavSep"></span>
@@ -119,15 +125,15 @@
           <span class="tb-label hidden" id="pdfZoomInfo">120%</span>
           <button class="tb-btn icon-only hidden" id="pdfZoomIn" title="Zoom in" aria-label="Zoom in">+</button>
           <span class="tb-sep hidden" id="pdfSep2"></span>
-          <button class="tb-btn" id="pdfMergeBtn" title="Merge multiple PDFs into one">🔗 Merge</button>
+          <button class="tb-btn" id="pdfMergeBtn" title="Merge multiple PDFs into one" aria-label="Merge PDFs">🔗 Merge</button>
           <button class="tb-btn icon-only hidden" id="pdfUndoBtn" title="Undo (Ctrl+Z)" aria-label="Undo">↶</button>
           <button class="tb-btn icon-only hidden" id="pdfRedoBtn" title="Redo (Ctrl+Y)" aria-label="Redo">↷</button>
-          <button class="tb-btn hidden" id="pdfSplitBtn" title="Extract page range">✂ Split</button>
-          <button class="tb-btn hidden" id="pdfRotateBtn" title="Rotate first page">⟳ Rotate</button>
-          <button class="tb-btn hidden" id="pdfDeleteBtn" title="Delete a page">🗑 Delete</button>
-          <button class="tb-btn hidden" id="pdfTextBtn" title="Add text">T Text</button>
-          <button class="tb-btn hidden" id="pdfSignBtn" title="Sign by drawing">✍ Sign</button>
-          <button class="tb-btn primary hidden" id="pdfSaveBtn">💾 Save</button>
+          <button class="tb-btn hidden" id="pdfSplitBtn" title="Extract page range" aria-label="Split: extract a page range">✂ Split</button>
+          <button class="tb-btn hidden" id="pdfRotateBtn" title="Rotate first page" aria-label="Rotate first page">⟳ Rotate</button>
+          <button class="tb-btn hidden" id="pdfDeleteBtn" title="Delete a page" aria-label="Delete a page">🗑 Delete</button>
+          <button class="tb-btn hidden" id="pdfTextBtn" title="Add text" aria-label="Add text">T Text</button>
+          <button class="tb-btn hidden" id="pdfSignBtn" title="Sign by drawing" aria-label="Sign by drawing">✍ Sign</button>
+          <button class="tb-btn primary hidden" id="pdfSaveBtn" aria-label="Save PDF">💾 Save</button>
           <span class="flex-spacer"></span>
           <span class="tb-label muted" id="pdfHint">100% offline · merge / split / reorder / annotate / sign</span>
         </div>
@@ -135,7 +141,7 @@
           <div class="pdf-canvas-area" id="pdfCanvasArea">
             <div class="center-panel" id="pdfEmpty">
               <div class="empty-state">
-                <h2>📕 PDF Tools</h2>
+                <h2><span aria-hidden="true">📕</span> PDF Tools</h2>
                 <p>Open a PDF to view, reorder, rotate, delete, and annotate pages — or merge multiple PDFs. Sign by drawing. Everything runs locally; no upload.</p>
                 <div class="big-btns">
                   <button class="tb-btn primary" id="pdfEmptyOpen">📂 Open a PDF</button>
@@ -156,7 +162,7 @@
     </main>
 
     <!-- ====================== STATUS BAR ====================== -->
-    <footer class="statusbar">
+    <footer class="statusbar" aria-label="Status bar">
       <span id="statusApp">Text Editor</span>
       <span id="statusInfo"></span>
       <span class="spacer"></span>

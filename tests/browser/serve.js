@@ -6,7 +6,8 @@ const root = path.resolve(process.argv[2] || '.');
 const port = +(process.argv[3] || 8765);
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.woff2': 'font/woff2',
   '.json': 'application/json', '.png': 'image/png', '.pdf': 'application/pdf', '.xlsx': 'application/octet-stream',
-  '.docx': 'application/octet-stream', '.pptx': 'application/octet-stream' };
+  '.docx': 'application/octet-stream', '.pptx': 'application/octet-stream',
+  '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json' };
 http.createServer((req, res) => {
   const url = decodeURIComponent(req.url.split('?')[0]);
   const p = path.join(root, url === '/' ? 'index.html' : url);

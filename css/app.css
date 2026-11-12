@@ -17,7 +17,7 @@
   --border-soft: #e4e6ec;
   --text:        #1c1e22;
   --text-dim:    #5a606b;
-  --text-faint:  #8a909c;
+  --text-faint:  #6b7280;
   --accent:      #1668e6;
   --accent-hov:  #0d57c4;
   --accent-soft: #e1ecff;
@@ -44,7 +44,7 @@ body.theme-dark {
   --border-soft: #32343b;
   --text:        #e6e7ea;
   --text-dim:    #a3a8b3;
-  --text-faint:  #6f7480;
+  --text-faint:  #9096a3;
   --accent:      #5b94fc;
   --accent-hov:  #7aaaff;
   --accent-soft: #2a3a52;
@@ -518,6 +518,21 @@ input, select, textarea { font-family: inherit; font-size: inherit; color: #1c1e
 }
 .writer-doc a { color: var(--accent); }
 .writer-doc img { max-width: 100%; }
+/* Page break marker: a labelled dashed line on screen, nothing on paper */
+.writer-doc hr.page-break {
+  border: 0; border-top: 2px dashed var(--accent);
+  height: 0; margin: 22px 0; overflow: visible; position: relative;
+}
+.writer-doc hr.page-break::after {
+  content: 'Page break';
+  position: absolute; left: 50%; top: -10px; transform: translateX(-50%);
+  padding: 0 10px; background: #fdfdfd; color: var(--accent);
+  font: 600 11px/18px var(--font-ui); letter-spacing: .5px; text-transform: uppercase;
+}
+@media print {
+  .writer-doc hr.page-break { border: 0 !important; margin: 0 !important; visibility: hidden; }
+  .writer-doc hr.page-break::after { content: none; }
+}
 body.theme-dark .writer-doc { color: #222; background: #fdfdfd; }
 
 /* ==========================================================================
@@ -584,6 +599,34 @@ body.theme-dark .calc-cell.calc-num { color: var(--text); }
   padding: 0 6px;
   background: var(--surface); color: var(--text);
   font: inherit;
+}
+/* Headers select a whole column / row / the sheet */
+.calc-colhead, .calc-rowhead, .calc-corner { cursor: pointer; user-select: none; }
+.calc-colhead:hover, .calc-rowhead:hover { background: var(--surface-3); }
+/* Multi-cell selection: one overlay rectangle instead of a class per cell */
+.calc-sel {
+  position: absolute; display: none; pointer-events: none; z-index: 1;
+  background: rgba(22, 104, 230, .12);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border: 1px solid var(--accent);
+}
+/* Frozen row 1 stays under the column letters while scrolling */
+.calc-cell.frozen {
+  position: sticky; top: 26px; z-index: 2;
+  background: var(--surface-2);
+  box-shadow: 0 1px 0 var(--border);
+}
+.calc-rowhead.frozen { top: 26px; z-index: 4; box-shadow: 0 1px 0 var(--border); }
+/* Rows hidden by a filter */
+.calc-cell.row-hidden, .calc-rowhead.row-hidden { display: none; }
+.calc-body.filtered .calc-rowhead { color: var(--accent); font-weight: 600; }
+/* Format bar (second toolbar row) */
+.calc-formatbar { min-height: 38px; padding: 3px 10px; }
+.tb-color-wrap { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+.tb-color {
+  width: 28px; height: 24px; padding: 0 2px;
+  border: 1px solid var(--border); border-radius: 5px;
+  background: var(--surface); cursor: pointer;
 }
 /* Charts — floating overlay panels */
 .calc-chart-layer {
@@ -661,8 +704,33 @@ body.theme-dark .calc-cell.calc-num { color: var(--text); }
 .impress-slidemeta button:hover { background: var(--surface-3); color: var(--text); }
 .impress-slidemeta .del:hover { color: var(--danger); }
 
+.impress-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.impress-notes {
+  flex-shrink: 0; padding: 6px 12px 10px;
+  background: var(--surface); border-top: 1px solid var(--border);
+}
+.impress-notes label {
+  display: block; font-size: 11px; font-weight: 600; letter-spacing: .5px;
+  text-transform: uppercase; color: var(--text-dim); margin-bottom: 4px;
+}
+.impress-notes textarea {
+  display: block; width: 100%; height: 58px; min-height: 34px; max-height: 40vh; resize: vertical;
+  padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--surface); color: var(--text); font-size: 13px; line-height: 1.4;
+}
+.imp-arrange { display: flex; gap: 4px; }
+.imp-arrange .tb-btn { flex: 1; justify-content: center; padding: 0 4px; border-color: var(--border); font-size: 12px; }
+.impress-inspector .tb-btn.w-100 { margin-bottom: 6px; }
+.imp-pres-notes {
+  position: absolute; left: 50%; bottom: 72px; transform: translateX(-50%);
+  width: min(900px, 90vw); max-height: 30vh; overflow: auto;
+  background: rgba(0,0,0,.82); color: #fff;
+  padding: 14px 18px; border-radius: 10px;
+  font-size: 18px; line-height: 1.5; white-space: pre-wrap;
+}
+.imp-pres-controls button.wide { width: auto; padding: 0 12px; border-radius: 16px; }
 .impress-stage {
-  flex: 1; min-width: 0; padding: 24px;
+  flex: 1; min-width: 0; min-height: 0; padding: 24px;
   display: grid; place-items: center;
   background: var(--bg);
   overflow: auto;
@@ -840,3 +908,20 @@ body.theme-dark .calc-cell.calc-num { color: var(--text); }
 /* Tab drag-to-reorder states (shared Tabs strip) */
 .te-tab.dragging { opacity: .45; }
 .te-tab.drag-over { border-color: var(--accent); box-shadow: inset 0 2px 0 var(--accent); }
+
+/* ==========================================================================
+   Accessibility (v2.1)
+   ========================================================================== */
+/* The hidden attribute must win over component display rules (.tb-btn etc.). */
+[hidden] { display: none !important; }
+/* A clear focus ring for keyboard users; mouse clicks do not show it. */
+button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible,
+[role=tab]:focus-visible, [role=option]:focus-visible, .te-new:focus-visible, a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.impress-canvas:focus-visible { box-shadow: var(--shadow), 0 0 0 3px var(--accent-soft); }
+/* Respect the "reduce motion" system setting. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
+}

@@ -54,6 +54,20 @@ closing a tab with unsaved work asks first.
 Every document tool also has a **＋ New** button (toolbar and tab strip) to
 start a fresh document in a new tab instantly.
 
+## Backing up your work
+
+Open documents are kept in the browser's own storage, which the browser or an
+IT clean-up can erase. Click **🛟** (top right) to save everything from every
+tool into one `.zip`, with ordinary copies of each document inside, and to
+restore from it later. PocketOffice also warns you if autosave stops working.
+
+## Offline use of the hosted copy
+
+The [live demo](https://donne4real.github.io/PocketOffice/) saves itself on
+your device after the first visit, so it keeps working without internet and
+can be installed as an app from the browser's address bar. (Opening the
+folder directly needs none of this.)
+
 ## Fonts
 
 The font menus offer two groups:
@@ -118,6 +132,10 @@ remove, run `uninstall-context-menu.bat`.
 | `Ctrl+B` / `I` / `U` | Bold / italic / underline (Writer) |
 | `Ctrl+Z` / `Ctrl+Y` | Undo / redo in the active tool |
 | `Ctrl+D` | Fill down (Calc) |
+| `Ctrl+C` / `X` / `V` | Copy / cut / paste cells (Calc) |
+| `Ctrl+Enter` | Page break (Writer) |
+| `Ctrl+G` / `Ctrl+Shift+G` | Group / ungroup (Impress) |
+| `N` | Show speaker notes while presenting (Impress) |
 | `F2` | Edit current cell (Calc) |
 | `Enter` / `Tab` / `Arrows` | Navigate cells (Calc) |
 | `Arrows` / `Space` / `Esc` | Navigate / exit present mode (Impress) |

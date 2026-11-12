@@ -165,7 +165,7 @@ const DocExport = (() => {
         const s = styleOf(el);
         blocks.push({ type: 'pre', text: el.textContent.replace(/\n$/, ''), color: s.color });
       } else if (tag === 'HR') {
-        blocks.push({ type: 'hr' });
+        blocks.push({ type: el.classList.contains('page-break') ? 'pagebreak' : 'hr' });
       } else if (tag === 'TABLE') {
         const rows = [...el.querySelectorAll('tr')].filter(tr => tr.closest('table') === el).map(tr =>
           [...tr.children].filter(c => c.tagName === 'TD' || c.tagName === 'TH').map(c => ({
@@ -190,6 +190,24 @@ const DocExport = (() => {
     return { blocks, defaults };
   }
 
+  // ---------- Header / footer text ----------
+  // Templates may use {page}, {pages}, {title} and {date}. Returns the
+  // pieces in order: plain strings, or { field: 'page' | 'pages' } for the
+  // two values only the output format can fill in.
+  function headerParts(tpl, vars = {}) {
+    const out = [];
+    String(tpl || '').split(/(\{page\}|\{pages\}|\{title\}|\{date\})/i).forEach(piece => {
+      const k = piece.toLowerCase();
+      if (k === '{page}') out.push({ field: 'page' });
+      else if (k === '{pages}') out.push({ field: 'pages' });
+      else if (k === '{title}') out.push(String(vars.title || ''));
+      else if (k === '{date}') out.push(String(vars.date || ''));
+      else if (piece) out.push(piece);
+    });
+    return out;
+  }
+  const headerText = (tpl, vars) => headerParts(tpl, vars).map(x => typeof x === 'string' ? x : String(vars[x.field] ?? '')).join('');
+
   function dataUrlBytes(dataUrl) {
     const bin = atob(dataUrl.split(',')[1] || '');
     const out = new Uint8Array(bin.length);
@@ -198,7 +216,8 @@ const DocExport = (() => {
   }
 
   // ---------- .docx ----------
-  async function toDocx(root) {
+  // page: { header, footer, title, date } — optional running header/footer.
+  async function toDocx(root, page = {}) {
     const D = window.docx;
     const { blocks } = collect(root);
     const ALIGN = {
@@ -246,6 +265,17 @@ const DocExport = (() => {
       return out;
     }
 
+    // A centred header/footer line; {page}/{pages} become live Word fields.
+    function marginPara(tpl) {
+      const look = { size: 18, color: '666666' };
+      return new D.Paragraph({
+        alignment: D.AlignmentType.CENTER,
+        children: headerParts(tpl, page).map(x => typeof x === 'string'
+          ? new D.TextRun(Object.assign({ text: x }, look))
+          : new D.TextRun(Object.assign({ children: [x.field === 'page' ? D.PageNumber.CURRENT : D.PageNumber.TOTAL_PAGES] }, look))),
+      });
+    }
+
     const children = [];
     for (const b of blocks) {
       if (b.type === 'heading') {
@@ -270,6 +300,8 @@ const DocExport = (() => {
         const kids = [];
         lines.forEach((l, i) => kids.push(new D.TextRun({ text: l, font: 'Courier New', size: 20, break: i ? 1 : undefined })));
         children.push(new D.Paragraph({ children: kids }));
+      } else if (b.type === 'pagebreak') {
+        children.push(new D.Paragraph({ children: [new D.PageBreak()] }));
       } else if (b.type === 'hr') {
         children.push(new D.Paragraph({ border: { bottom: { color: '999999', space: 1, style: D.BorderStyle.SINGLE, size: 6 } } }));
       } else if (b.type === 'table') {
@@ -299,14 +331,16 @@ const DocExport = (() => {
           })),
         }],
       },
-      sections: [{ properties: {}, children }],
+      sections: [Object.assign({ properties: {}, children },
+        page.header ? { headers: { default: new D.Header({ children: [marginPara(page.header)] }) } } : null,
+        page.footer ? { footers: { default: new D.Footer({ children: [marginPara(page.footer)] }) } } : null)],
     });
     const blob = await D.Packer.toBlob(doc);
     return new Uint8Array(await blob.arrayBuffer());
   }
 
   // ---------- .pdf ----------
-  async function toPdf(root) {
+  async function toPdf(root, page = {}) {
     const { jsPDF } = window.jspdf;
     const pdf = new jsPDF({ unit: 'pt', format: 'a4' });
     PdfFonts.register(pdf);
@@ -471,6 +505,8 @@ const DocExport = (() => {
         const base = { font: 'JetBrains Mono', sizePt: 9.5, color: b.color };
         for (const l of b.text.split('\n')) flow([{ text: l || ' ' }], { base, gapAfter: 0 });
         y += 6;
+      } else if (b.type === 'pagebreak') {
+        pdf.addPage(); y = margin;
       } else if (b.type === 'hr') {
         ensureSpace(12);
         pdf.setDrawColor(160, 160, 160);
@@ -481,10 +517,23 @@ const DocExport = (() => {
         table(b.rows);
       }
     }
+    // Running header/footer, drawn once the page count is known.
+    if (page.header || page.footer) {
+      const pages = pdf.getNumberOfPages();
+      for (let i = 1; i <= pages; i++) {
+        pdf.setPage(i);
+        pdf.setFont('helvetica', 'normal');
+        pdf.setFontSize(9);
+        pdf.setTextColor(110, 110, 110);
+        const vars = Object.assign({}, page, { page: i, pages });
+        if (page.header) pdf.text(headerText(page.header, vars), pageW / 2, 32, { align: 'center' });
+        if (page.footer) pdf.text(headerText(page.footer, vars), pageW / 2, pageH - 26, { align: 'center' });
+      }
+    }
     return new Uint8Array(pdf.output('arraybuffer'));
   }
 
-  return { toDocx, toPdf, collect, parseColor, hex };
+  return { toDocx, toPdf, collect, parseColor, hex, headerParts, headerText };
 })();
 
 if (typeof module !== 'undefined' && module.exports) module.exports = DocExport;

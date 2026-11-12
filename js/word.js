@@ -1,12 +1,15 @@
 /* ==========================================================================
    word.js — Writer: a rich-text word processor using contentEditable.
-   Toolbar with formatting, table/image/link, find&replace, autosave, and
-   export to .html / .txt / .pdf (jsPDF) / .docx (docx lib).
+   Toolbar with formatting, table/image/link, page breaks, a running
+   header/footer, find&replace, autosave, and export to .html / .txt /
+   .pdf (jsPDF) / .docx (docx lib).
    ========================================================================== */
 
 const Writer = (() => {
-  // Open documents: { id, name, handle, dirty, html }. The active tab's
-  // content lives in the editor DOM; inactive tabs park theirs in .html.
+  // Open documents: { id, name, handle, dirty, html, header, footer }. The
+  // active tab's content lives in the editor DOM; inactive tabs park theirs
+  // in .html. header/footer are one-line templates printed on every page;
+  // they may use {page}, {pages}, {title} and {date}.
   const docs = [];
   let activeId = null;
   let docSeq = 1;
@@ -67,10 +70,12 @@ const Writer = (() => {
     fontSel.className = 'tb-select';
     fontSel.innerHTML = Fonts.options('Calibri');
     fontSel.style.minWidth = '130px';
+    fontSel.setAttribute('aria-label', 'Font');
     fontSel.onchange = () => { editor.focus(); run('fontname', fontSel.value); };
     const sizeSel = document.createElement('select');
     sizeSel.className = 'tb-select';
     sizeSel.style.width = '60px';
+    sizeSel.setAttribute('aria-label', 'Font size');
     sizeSel.innerHTML = SIZES.map(s => `<option value="${s}">${s}</option>`).join('');
     sizeSel.value = 3;
     sizeSel.onchange = () => { editor.focus(); run('fontsize', sizeSel.value); };
@@ -90,6 +95,7 @@ const Writer = (() => {
     const blockSel = document.createElement('select');
     blockSel.className = 'tb-select';
     blockSel.style.minWidth = '110px';
+    blockSel.setAttribute('aria-label', 'Paragraph style');
     blockSel.innerHTML = `
       <option value="p">Paragraph</option>
       <option value="h1">Heading 1</option>
@@ -124,6 +130,8 @@ const Writer = (() => {
       btn('🖼️', 'insertImage', 'Insert image', { value: null }),
       btn('▦', 'insertTable', 'Insert table'),
       btn('―', 'insertHorizontalRule', 'Horizontal rule'),
+      btn('⤓ Page break', 'pageBreak', 'Insert page break (Ctrl+Enter)'),
+      btn('▤ Header/footer', 'pageSetup', 'Header and footer for printing and export'),
     ]);
 
     // Tools
@@ -191,6 +199,8 @@ const Writer = (() => {
         return;
       }
       case 'insertTable': return insertTable();
+      case 'pageBreak':   return insertPageBreak();
+      case 'pageSetup':   return pageSetup();
       default:
         exec(cmd, value);
     }
@@ -229,6 +239,8 @@ const Writer = (() => {
         const sw = document.createElement('button');
         sw.className = 'tb-btn';
         sw.style.cssText = `width:30px;height:30px;background:${c};border:1px solid #ccc;padding:0;`;
+        sw.title = c;
+        sw.setAttribute('aria-label', 'Colour ' + c);
         sw.onclick = () => { d.close(); resolve(c); };
         body.appendChild(sw);
       });
@@ -288,6 +300,97 @@ const Writer = (() => {
     after.collapse(true);
     sel.removeAllRanges();
     sel.addRange(after);
+  }
+
+  // ----- Page breaks -----
+  // A page break is <hr class="page-break">: it cannot be typed into, a
+  // Backspace removes it, and its inline break-after style still works when
+  // the document is saved as a standalone .html and printed elsewhere.
+  function stylePageBreak(hr) {
+    hr.style.pageBreakAfter = 'always';
+    hr.style.breakAfter = 'page';
+    hr.setAttribute('aria-label', 'Page break');
+  }
+  const fixPageBreaks = () => editor.querySelectorAll('hr.page-break').forEach(stylePageBreak);
+  function insertPageBreak() {
+    editor.focus();
+    History.snapshot(docKey(), editor.innerHTML, (html) => { editor.innerHTML = html; markDirty(); });
+    undoArmed = false;
+    const hr = document.createElement('hr');
+    hr.className = 'page-break';
+    stylePageBreak(hr);
+    // Break after the block the caret is in (or at the end of the document).
+    const sel = window.getSelection();
+    let block = sel && sel.rangeCount && editor.contains(sel.anchorNode) ? sel.anchorNode : null;
+    while (block && block.parentNode !== editor) block = block.parentNode;
+    if (block) block.after(hr); else editor.appendChild(hr);
+    const p = document.createElement('p');
+    p.innerHTML = '<br>';
+    hr.after(p);
+    const r = document.createRange();
+    r.setStart(p, 0);
+    r.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(r);
+    markDirty();
+  }
+
+  // ----- Header & footer -----
+  const pageInfo = () => {
+    const d = activeDoc() || {};
+    return { header: d.header || '', footer: d.footer || '', title: stripExt(d.name || ''), date: new Date().toLocaleDateString() };
+  };
+  function pageSetup() {
+    const d = activeDoc();
+    if (!d) return;
+    const body = document.createElement('div');
+    body.style.cssText = 'min-width:380px';
+    body.innerHTML = `
+      <p class="muted small">One line at the top and bottom of every page when you print or export to PDF or Word.</p>
+      <div class="row"><label for="psHead">Header</label><input type="text" id="psHead" maxlength="200" placeholder="e.g. {title}"></div>
+      <div class="row"><label for="psFoot">Footer</label><input type="text" id="psFoot" maxlength="200" placeholder="e.g. Page {page} of {pages}"></div>
+      <p class="muted small">You can use <b>{page}</b>, <b>{pages}</b>, <b>{title}</b> and <b>{date}</b>.
+        <button class="tb-btn" id="psNumbers" type="button">Add page numbers</button></p>`;
+    const head = body.querySelector('#psHead'), foot = body.querySelector('#psFoot');
+    head.value = d.header || '';
+    foot.value = d.footer || '';
+    body.querySelector('#psNumbers').onclick = () => { foot.value = 'Page {page} of {pages}'; };
+    UI.dialog({
+      title: 'Header & footer', body, okText: 'Apply',
+      onOk: () => {
+        const h = head.value.trim(), f = foot.value.trim();
+        if (h === (d.header || '') && f === (d.footer || '')) return;
+        d.header = h; d.footer = f;
+        markDirty();
+        UI.toast(h || f ? 'Header/footer set — it appears when you print or export.' : 'Header/footer removed.', 'success');
+      },
+    });
+    setTimeout(() => head.focus(), 0);
+  }
+  // Printing: Chromium (131+) draws @page margin boxes, so the header and
+  // footer are injected as a temporary stylesheet while Writer prints.
+  const cssString = (s) => '"' + String(s).replace(/[\\"]/g, '\\$&').replace(/[\r\n]+/g, ' ') + '"';
+  function pageCss() {
+    const info = pageInfo();
+    const content = (tpl) => DocExport.headerParts(tpl, info)
+      .map(x => typeof x === 'string' ? cssString(x) : 'counter(' + x.field + ')').join(' ') || 'none';
+    const box = 'font: 9pt sans-serif; color: #666;';
+    return '@page {' +
+      (info.header ? ' @top-center { content: ' + content(info.header) + '; ' + box + ' }' : '') +
+      (info.footer ? ' @bottom-center { content: ' + content(info.footer) + '; ' + box + ' }' : '') + ' }';
+  }
+  function wirePrintHeader() {
+    window.addEventListener('beforeprint', () => {
+      document.getElementById('writerPageStyle')?.remove();
+      const panel = $('panel-writer');
+      const info = pageInfo();
+      if (!panel || !panel.classList.contains('active') || !(info.header || info.footer)) return;
+      const st = document.createElement('style');
+      st.id = 'writerPageStyle';
+      st.textContent = pageCss();
+      document.head.appendChild(st);
+    });
+    window.addEventListener('afterprint', () => document.getElementById('writerPageStyle')?.remove());
   }
 
   function insertTable() {
@@ -379,11 +482,11 @@ const Writer = (() => {
     editor.focus();
   }
 
-  function addDoc({ name = null, html = '<p><br></p>', handle = null } = {}) {
+  function addDoc({ name = null, html = '<p><br></p>', handle = null, header = '', footer = '' } = {}) {
     const n = docSeq++;
     const id = 'w' + n;
     if (!name) name = 'Untitled-' + n + '.html';
-    const doc = { id, name, handle, dirty: false, html };
+    const doc = { id, name, handle, dirty: false, html, header, footer };
     docs.push(doc);
     activateDoc(id);
     autosaveSoon();   // persist the new tab in the session manifest soon
@@ -396,6 +499,7 @@ const Writer = (() => {
     activeId = id;
     const d = activeDoc();
     editor.innerHTML = d.html || '<p><br></p>';
+    fixPageBreaks();
     undoArmed = false;   // a fresh tab starts a fresh undo burst
     clearTimeout(undoTimer);
     // Initialize undo once per document — switching tabs must NOT wipe a
@@ -417,7 +521,7 @@ const Writer = (() => {
     const doClose = () => {
       // Park the closed doc for Ctrl+Shift+T reopen (content snapshot first).
       d.html = d.id === activeId ? editor.innerHTML : d.html;
-      closedDocs.unshift({ id: d.id, name: d.name, handle: d.handle, dirty: d.dirty, html: d.html });
+      closedDocs.unshift({ id: d.id, name: d.name, handle: d.handle, dirty: d.dirty, html: d.html, header: d.header || '', footer: d.footer || '' });
       if (closedDocs.length > 10) closedDocs.length = 10;
       docs.splice(i, 1);
       if (activeId === id) {
@@ -441,7 +545,7 @@ const Writer = (() => {
   function reopenDoc() {
     if (!closedDocs.length) { UI.toast('No recently closed documents', 'info'); return; }
     const d = closedDocs.shift();
-    docs.push({ id: d.id, name: d.name, handle: d.handle, dirty: d.dirty, html: d.html });
+    docs.push({ id: d.id, name: d.name, handle: d.handle, dirty: d.dirty, html: d.html, header: d.header || '', footer: d.footer || '' });
     activateDoc(d.id);
     autosaveSoon();
     UI.toast(`Reopened ${d.name}`, 'success');
@@ -464,16 +568,32 @@ const Writer = (() => {
   }
 
   // Load opened file content into the pristine active tab, or a new tab.
-  function openIntoDoc(name, handle, html) {
+  function openIntoDoc(name, handle, html, { header = '', footer = '' } = {}) {
     if (isPristine()) {
       const d = activeDoc();
       editor.innerHTML = html;
+      fixPageBreaks();
       d.name = name; d.handle = handle; d.dirty = false;
+      d.header = header; d.footer = footer;
       History.reset(docKey());
-      updateName(); renderTabs(); autosaveSoon();
+      updateName(); renderTabs(); autosaveSoon(); updateStatus();
     } else {
-      addDoc({ name, handle, html });
+      addDoc({ name, handle, html, header, footer });
     }
+  }
+  // Header/footer travel in a saved .html as <meta name="po:header|po:footer">.
+  function metaTag(name, value) {
+    return value ? '<meta name="po:' + name + '" content="' + escapeHtml(value) + '">' : '';
+  }
+  function readMeta(htmlText, name) {
+    const m = new RegExp('<meta\\s+name="po:' + name + '"\\s+content="([^"]*)"', 'i').exec(htmlText);
+    if (!m) return '';
+    return m[1].replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').slice(0, 200);
+  }
+  function htmlFile(title, d) {
+    return '<!DOCTYPE html>\n<html><head><meta charset="utf-8"><title>' + escapeHtml(title) + '</title>' +
+      metaTag('header', d.header) + metaTag('footer', d.footer) +
+      '</head><body>\n' + editor.innerHTML + '\n</body></html>';
   }
 
   async function openDoc() {
@@ -503,7 +623,8 @@ const Writer = (() => {
       }
       const text = await f.text();
       if (ext === 'html' || ext === 'htm') {
-        openIntoDoc(f.name, f.handle || null, Sanitize.html(Sanitize.bodyOf(text)));
+        openIntoDoc(f.name, f.handle || null, Sanitize.html(Sanitize.bodyOf(text)),
+          { header: readMeta(text, 'header'), footer: readMeta(text, 'footer') });
       } else {
         // Plain text: convert to paragraphs
         const html = text.split(/\r?\n/).map(l => `<p>${escapeHtml(l) || '<br>'}</p>`).join('');
@@ -522,7 +643,8 @@ const Writer = (() => {
       await Libs.need('mammoth');
       // mammoth needs an ArrayBuffer view of the bytes
       const ab = f.bytes.buffer.slice(f.bytes.byteOffset, f.bytes.byteOffset + f.bytes.byteLength);
-      const result = await window.mammoth.convertToHtml({ arrayBuffer: ab });
+      // Word page breaks become Writer page breaks (mammoth drops them by default).
+      const result = await window.mammoth.convertToHtml({ arrayBuffer: ab }, { styleMap: ["br[type='page'] => hr.page-break"] });
       const html = result.value || '<p><br></p>';
       openIntoDoc(f.name, f.handle || null, Sanitize.html(html));
       const warns = (result.messages || []).filter(m => m.type === 'warning').length;
@@ -551,8 +673,7 @@ const Writer = (() => {
         content = editor.innerText;
         mime = 'text/plain';
       } else {
-        content = '<!DOCTYPE html>\n<html><head><meta charset="utf-8"><title>' + escapeHtml(stripExt(d.name)) +
-          '</title></head><body>\n' + editor.innerHTML + '\n</body></html>';
+        content = htmlFile(stripExt(d.name), d);
         mime = 'text/html';
       }
       const bytes = new TextEncoder().encode(content);
@@ -578,7 +699,7 @@ const Writer = (() => {
       d.docxOverwriteOk = true;
     }
     await Libs.need('docx');
-    const bytes = await DocExport.toDocx(editor);
+    const bytes = await DocExport.toDocx(editor, pageInfo());
     const outName = stripExt(d.name) + '.docx';
     const res = await FS.save({ name: outName, mime: DOCX_MIME, bytes, handle: canOverwrite ? d.handle : null });
     afterSave(d, res, outName);
@@ -616,9 +737,7 @@ const Writer = (() => {
     const base = stripExt(d.name);
     try {
       if (fmt === 'html') {
-        const html = '<!DOCTYPE html>\n<html><head><meta charset="utf-8"><title>' + escapeHtml(base) +
-          '</title></head><body>\n' + editor.innerHTML + '\n</body></html>';
-        await FS.save({ name: base + '.html', mime: 'text/html', bytes: new TextEncoder().encode(html), handle: null });
+        await FS.save({ name: base + '.html', mime: 'text/html', bytes: new TextEncoder().encode(htmlFile(base, d)), handle: null });
       } else if (fmt === 'txt') {
         await FS.save({ name: base + '.txt', mime: 'text/plain', bytes: new TextEncoder().encode(editor.innerText), handle: null });
       } else if (fmt === 'pdf') {
@@ -636,13 +755,13 @@ const Writer = (() => {
   // see docexport.js.
   async function exportPdf(base) {
     await Libs.need('jspdf');
-    const bytes = await DocExport.toPdf(editor);
+    const bytes = await DocExport.toPdf(editor, pageInfo());
     await FS.save({ name: base + '.pdf', mime: 'application/pdf', bytes, handle: null });
   }
 
   async function exportDocx(base) {
     await Libs.need('docx');
-    const bytes = await DocExport.toDocx(editor);
+    const bytes = await DocExport.toDocx(editor, pageInfo());
     await FS.save({ name: base + '.docx', mime: DOCX_MIME, bytes, handle: null });
   }
 
@@ -687,13 +806,20 @@ const Writer = (() => {
     const d = activeDoc();
     if (el) el.textContent = (d ? d.name : '') + (d && d.dirty ? ' •' : '');
   }
+  const countWords = (t) => (t.trim().match(/\S+/g) || []).length;
+  // Word/character count in the status bar; with text selected, the count
+  // of the selection too. Only while Writer is the tool on screen.
   function updateStatus() {
     const info = $('statusInfo');
-    if (info) {
-      const words = (editor.innerText.trim().match(/\S+/g) || []).length;
-      const chars = editor.innerText.length;
-      info.textContent = `${words} words · ${chars} chars`;
-    }
+    const panel = $('panel-writer');
+    if (!info || !editor || !panel || !panel.classList.contains('active')) return;
+    const text = editor.innerText;
+    const words = countWords(text);
+    const breaks = editor.querySelectorAll('hr.page-break').length;
+    const sel = window.getSelection();
+    const picked = sel && sel.rangeCount && !sel.isCollapsed && editor.contains(sel.anchorNode) ? sel.toString() : '';
+    info.textContent = (picked.trim() ? `${countWords(picked)} of ${words} words selected` : `${words} words`) +
+      ` · ${text.length} chars` + (breaks ? ` · ${breaks} page break${breaks === 1 ? '' : 's'}` : '');
   }
   function autosaveSoon() {
     clearTimeout(autosaveTimer);
@@ -710,6 +836,7 @@ const Writer = (() => {
       docs: docs.map(d => ({
         id: d.id, name: d.name, dirty: d.dirty, handle: d.handle || null,
         html: d.id === activeId ? editor.innerHTML : d.html,
+        header: d.header || '', footer: d.footer || '',
       })),
     };
     try {
@@ -781,6 +908,16 @@ const Writer = (() => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
         e.preventDefault(); saveDoc(false);
       }
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'Enter') {
+        e.preventDefault(); insertPageBreak();
+      }
+    });
+    wirePrintHeader();
+    // Selection word count (throttled: innerText forces a layout).
+    let selTimer = null;
+    document.addEventListener('selectionchange', () => {
+      if (selTimer) return;
+      selTimer = setTimeout(() => { selTimer = null; updateStatus(); }, 200);
     });
 
     // Restore last session: the open tabs and their content.
@@ -797,6 +934,8 @@ const Writer = (() => {
             handle: (s.handle && typeof s.handle === 'object') ? s.handle : null,
             dirty: !!s.dirty,
             html: s.html || '<p><br></p>',
+            header: typeof s.header === 'string' ? s.header.slice(0, 200) : '',
+            footer: typeof s.footer === 'string' ? s.footer.slice(0, 200) : '',
           });
         });
         // Continue numbering after the highest id in use (not the tab count).
@@ -819,7 +958,7 @@ const Writer = (() => {
   }
 
   function onActivate() {
-    setTimeout(() => editor && editor.focus(), 0);
+    setTimeout(() => { if (editor) { editor.focus(); updateStatus(); } }, 0);
   }
 
   return { boot, onActivate, flush, undo: doUndo, redo: doRedo, reopen: reopenDoc };

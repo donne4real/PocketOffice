@@ -1,0 +1,51 @@
+name: Release
+
+# Push a version tag to publish a release:
+#   1. set the new version in js/version.js (and package.json), commit, push
+#   2. git tag v2.1.0 && git push origin v2.1.0
+# The release gets two downloads:
+#   - PocketOffice-standalone.html  (the whole app in one file)
+#   - PocketOffice-<tag>.zip        (the folder version: unzip, run start.bat)
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Tag must match js/version.js
+        run: |
+          version="v$(node -p "/version:\s*'([^']+)'/.exec(require('fs').readFileSync('js/version.js','utf8'))[1]")"
+          if [ "$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match js/version.js ($version). Update version.js or re-tag."
+            exit 1
+          fi
+
+      # Never publish a build that fails its own tests.
+      - run: npm test
+      - run: npm run build
+      - run: node tests/browser/serve.js . 8765 &
+      - run: sleep 1
+      - run: node tests/browser/e2e.js "$(command -v google-chrome)" http://127.0.0.1:8765/
+
+      - name: Package the folder version
+        run: git archive --format=zip --prefix=PocketOffice/ -o "PocketOffice-$GITHUB_REF_NAME.zip" "$GITHUB_REF_NAME"
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            PocketOffice-standalone.html \
+            "PocketOffice-$GITHUB_REF_NAME.zip" \
+            --title "PocketOffice $GITHUB_REF_NAME" \
+            --generate-notes

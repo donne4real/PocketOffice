@@ -393,7 +393,190 @@ const Formula = (() => {
     return a.map((v, i) => [v, b[i]]);
   }
 
-  const serialToDate = (s) => new Date((toNum(s) - 25569) * 86400000);
+  // ---------- Dates ----------
+  // Dates are Excel serial numbers (days since 1899-12-30). Date functions
+  // also accept ISO text ("2026-09-23"), which is what a typed date stays as.
+  const DAY_MS = 86400000;
+  const ISO_DATE_RE = /^(\d{4})-(\d{1,2})-(\d{1,2})$/;
+  const dateToSerial = (y, m, d) => Date.UTC(y, m - 1, d) / DAY_MS + 25569;   // m is 1-based; overflow rolls over
+  function toSerial(v) {
+    if (typeof v === 'string') {
+      const m = ISO_DATE_RE.exec(v.trim());
+      if (m) return dateToSerial(+m[1], +m[2], +m[3]);
+    }
+    return toNum(v);
+  }
+  const serialToDate = (s) => new Date(Math.round((toSerial(s) - 25569) * DAY_MS));
+  const lastDayOfMonth = (y, m) => new Date(Date.UTC(y, m, 0)).getUTCDate();   // m is 1-based
+  // Same day-of-month n months away, clamped to that month's length.
+  function addMonths(serial, n) {
+    const d = serialToDate(Math.floor(toSerial(serial)));
+    const total = d.getUTCFullYear() * 12 + d.getUTCMonth() + Math.trunc(toNum(n));
+    const y = Math.floor(total / 12), m = total - y * 12 + 1;
+    return { y, m, day: Math.min(d.getUTCDate(), lastDayOfMonth(y, m)) };
+  }
+
+  // ---------- Number formats ----------
+  // A small subset of Excel format codes, enough for the presets Calc offers
+  // and the common codes found in imported workbooks:
+  //   0  0.00  #,##0.00  0%  $#,##0.00  0.00E+00  yyyy-mm-dd  d mmm yyyy  hh:mm
+  const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const pad2 = (n) => (n < 10 ? '0' : '') + n;
+
+  // First section of a code as [{ lit, text }]: quoted text and \x escapes
+  // are literals; [..] conditions/locales and *x fills are dropped, _x is a space.
+  function formatParts(code) {
+    const parts = [];
+    const push = (lit, text) => {
+      const last = parts[parts.length - 1];
+      if (last && last.lit === lit) last.text += text; else parts.push({ lit, text });
+    };
+    const src = String(code);
+    for (let i = 0; i < src.length; i++) {
+      const c = src[i];
+      if (c === ';') break;
+      if (c === '"') { const j = src.indexOf('"', i + 1); const end = j < 0 ? src.length : j; push(true, src.slice(i + 1, end)); i = end; }
+      else if (c === '\\') { if (i + 1 < src.length) push(true, src[++i]); }
+      else if (c === '[') {
+        // [$€-407] carries a currency symbol; other brackets are conditions/colours.
+        const j = src.indexOf(']', i);
+        const end = j < 0 ? src.length : j;
+        const cur = /^\$([^-\]]*)/.exec(src.slice(i + 1, end));
+        if (cur && cur[1]) push(true, cur[1]);
+        i = end;
+      }
+      else if (c === '_') { i++; push(true, ' '); }
+      else if (c === '*') { i++; }
+      else push(false, c);
+    }
+    return parts;
+  }
+  const DATE_TOKEN_RE = /yyyy|yy|mmmm|mmm|mm|m|dddd|ddd|dd|d|hh|h|ss|s|am\/pm|a\/p/gi;
+
+  function formatDateCode(serial, parts) {
+    const whole = Math.floor(serial);
+    const d = new Date(Math.round((whole - 25569) * DAY_MS));
+    let secs = Math.round((serial - whole) * 86400);
+    if (secs >= 86400) secs = 86399;
+    const H = Math.floor(secs / 3600), M = Math.floor(secs % 3600 / 60), S = secs % 60;
+    const twelve = parts.some(p => !p.lit && /am\/pm|a\/p/i.test(p.text));
+    const toks = [];
+    for (const p of parts) {
+      if (p.lit) { toks.push({ lit: p.text }); continue; }
+      let last = 0, m;
+      DATE_TOKEN_RE.lastIndex = 0;
+      while ((m = DATE_TOKEN_RE.exec(p.text))) {
+        if (m.index > last) toks.push({ lit: p.text.slice(last, m.index) });
+        toks.push({ tok: m[0].toLowerCase() });
+        last = m.index + m[0].length;
+      }
+      if (last < p.text.length) toks.push({ lit: p.text.slice(last) });
+    }
+    // "m" means minutes right after an hour token or right before seconds.
+    const real = toks.filter(t => t.tok);
+    real.forEach((t, i) => {
+      if (t.tok !== 'm' && t.tok !== 'mm') return;
+      const prev = real[i - 1], next = real[i + 1];
+      if ((prev && prev.tok[0] === 'h') || (next && next.tok[0] === 's')) t.minute = true;
+    });
+    return toks.map(t => {
+      if (!t.tok) return t.lit;
+      switch (t.tok) {
+        case 'yyyy': return '' + d.getUTCFullYear();
+        case 'yy': return pad2(d.getUTCFullYear() % 100);
+        case 'mmmm': return MONTH_NAMES[d.getUTCMonth()];
+        case 'mmm': return MONTH_NAMES[d.getUTCMonth()].slice(0, 3);
+        case 'mm': return t.minute ? pad2(M) : pad2(d.getUTCMonth() + 1);
+        case 'm': return t.minute ? '' + M : '' + (d.getUTCMonth() + 1);
+        case 'dddd': return DAY_NAMES[d.getUTCDay()];
+        case 'ddd': return DAY_NAMES[d.getUTCDay()].slice(0, 3);
+        case 'dd': return pad2(d.getUTCDate());
+        case 'd': return '' + d.getUTCDate();
+        case 'hh': return pad2(twelve ? (H % 12 || 12) : H);
+        case 'h': return '' + (twelve ? (H % 12 || 12) : H);
+        case 'ss': return pad2(S);
+        case 's': return '' + S;
+        case 'am/pm': return H < 12 ? 'AM' : 'PM';
+        case 'a/p': return H < 12 ? 'A' : 'P';
+      }
+      return '';
+    }).join('');
+  }
+
+  function formatNumberCode(n, parts) {
+    // Find the run of digit placeholders; everything else is prefix/suffix text.
+    let prefix = '', suffix = '', core = '', exp = '', percent = false, seenCore = false;
+    for (const p of parts) {
+      if (p.lit) { if (seenCore) suffix += p.text; else prefix += p.text; continue; }
+      let text = p.text;
+      if (!seenCore) {
+        const m = /[#0?](?:[#0?,.]*[#0?])?(E[+-]0+)?/.exec(text);
+        if (!m) { prefix += text; continue; }
+        seenCore = true;
+        prefix += text.slice(0, m.index);
+        exp = m[1] || '';
+        core = exp ? m[0].slice(0, -exp.length) : m[0];
+        text = text.slice(m.index + m[0].length);
+      }
+      suffix += text;
+    }
+    if (!seenCore) return null;
+    if ((prefix + suffix).includes('%')) percent = true;
+    const dot = core.indexOf('.');
+    const intPart = dot < 0 ? core : core.slice(0, dot);
+    const decPart = dot < 0 ? '' : core.slice(dot + 1).replace(/,/g, '');
+    const maxDec = Math.min(decPart.length, 20);
+    const minDec = (decPart.match(/0/g) || []).length;
+    const v = Math.abs(n) * (percent ? 100 : 1);
+    let body;
+    if (exp) {
+      const [mant, e] = v.toExponential(maxDec).split('e');
+      const en = parseInt(e, 10);
+      body = mant + 'E' + (en < 0 ? '-' : '+') + String(Math.abs(en)).padStart(exp.length - 2, '0');
+    } else {
+      let [ip, dp = ''] = v.toFixed(maxDec).split('.');
+      while (dp.length > minDec && dp[dp.length - 1] === '0') dp = dp.slice(0, -1);
+      const minInt = (intPart.match(/0/g) || []).length;
+      if (minInt === 0 && ip === '0' && dp) ip = '';
+      ip = ip.padStart(minInt, '0');
+      if (intPart.includes(',')) ip = ip.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+      body = ip + (dp ? '.' + dp : '');
+    }
+    const isZero = !/[1-9]/.test(body);
+    return (n < 0 && !isZero ? '-' : '') + prefix + body + suffix;
+  }
+
+  // Display text for a value under a format code. Non-numbers pass through.
+  function formatValue(v, code) {
+    if (typeof v !== 'number') return v == null ? '' : typeof v === 'boolean' ? (v ? 'TRUE' : 'FALSE') : '' + v;
+    if (!isFinite(v)) return '#NUM!';
+    if (!code || /^general$/i.test(code) || code === '@') return formatNumber(v);
+    const parts = formatParts(code);
+    const bare = parts.filter(p => !p.lit).map(p => p.text).join('');
+    if (/[ymdhs]/i.test(bare) && !/[#0?]/.test(bare)) return formatDateCode(v, parts);
+    const out = formatNumberCode(v, parts);
+    return out == null ? formatNumber(v) : out;
+  }
+
+  // Which cells pass every (range, criterion) pair — SUMIFS and friends.
+  function ifsMask(args) {
+    if (!args.length || args.length % 2) throw error('#VALUE!');
+    let mask = null;
+    for (let i = 0; i < args.length; i += 2) {
+      const flat = flatten([as2D(args[i])]);
+      const f = makeCriterion(scalar(args[i + 1]));
+      if (mask && flat.length !== mask.length) throw error('#VALUE!');
+      mask = flat.map((v, k) => (mask ? mask[k] : true) && f(v));
+    }
+    return mask;
+  }
+  function ifsValues(range, rest) {
+    const vals = flatten([as2D(range)]);
+    const mask = ifsMask(rest);
+    if (vals.length !== mask.length) throw error('#VALUE!');
+    return vals.filter((v, i) => mask[i] && typeof v === 'number');
+  }
 
   const FUNCS = {
     SUM: (...a) => flattenNums(a).reduce((x, y) => x + y, 0),
@@ -444,10 +627,56 @@ const Formula = (() => {
     MID: (x, s, n) => toText(x).substr(toNum(s) - 1, toNum(n)),
     REPLACE: (o, s, n, r) => { o = toText(o); s = toNum(s); n = toNum(n); return o.slice(0, s - 1) + toText(r) + o.slice(s - 1 + n); },
     SUBSTITUTE: (t, a, b) => toText(t).split(toText(a)).join(toText(b)),
-    TEXT: (x) => toText(x),
+    TEXT: (x, fmt) => {
+      if (fmt === undefined) return toText(x);
+      let n;
+      try { n = toSerial(x); } catch (e) { return toText(x); }
+      return formatValue(n, toText(fmt));
+    },
+    TEXTJOIN: (delim, ignoreEmpty, ...a) => flatten(a).filter(x => !(truthy(ignoreEmpty) && (x === '' || x == null))).map(toText).join(toText(delim)),
+    FIND: (find, within, start = 1) => {
+      const i = toText(within).indexOf(toText(find), toNum(start) - 1);
+      if (i < 0 || toNum(start) < 1) throw error('#VALUE!');
+      return i + 1;
+    },
+    SEARCH: (find, within, start = 1) => {
+      const i = toText(within).toLowerCase().indexOf(toText(find).toLowerCase(), toNum(start) - 1);
+      if (i < 0 || toNum(start) < 1) throw error('#VALUE!');
+      return i + 1;
+    },
+    PROPER: (x) => toText(x).toLowerCase().replace(/(^|[^a-zÀ-ɏ])([a-zÀ-ɏ])/g, (m, a, b) => a + b.toUpperCase()),
+    EXACT: (a, b) => toText(a) === toText(b),
+    REPT: (x, n) => { n = Math.floor(toNum(n)); if (n < 0 || n * toText(x).length > 32767) throw error('#VALUE!'); return toText(x).repeat(n); },
     VALUE: (x) => toNum(x),
-    NOW: () => Date.now() / 86400000 + 25569,   // Excel serial
-    TODAY: () => Math.floor(Date.now() / 86400000 + 25569),
+    // Local wall-clock time as an Excel serial (UTC put "today" a day off near midnight).
+    NOW: () => { const d = new Date(); return dateToSerial(d.getFullYear(), d.getMonth() + 1, d.getDate()) + (d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds()) / 86400; },
+    TODAY: () => { const d = new Date(); return dateToSerial(d.getFullYear(), d.getMonth() + 1, d.getDate()); },
+    DATE: (y, m, d) => dateToSerial(Math.trunc(toNum(y)), Math.trunc(toNum(m)), Math.trunc(toNum(d))),
+    DATEVALUE: (t) => { const m = ISO_DATE_RE.exec(toText(t).trim()); if (!m) throw error('#VALUE!'); return dateToSerial(+m[1], +m[2], +m[3]); },
+    EDATE: (s, n) => { const r = addMonths(s, n); return dateToSerial(r.y, r.m, r.day); },
+    EOMONTH: (s, n) => { const r = addMonths(s, n); return dateToSerial(r.y, r.m, lastDayOfMonth(r.y, r.m)); },
+    DAYS: (end, start) => Math.floor(toSerial(end)) - Math.floor(toSerial(start)),
+    WEEKDAY: (s, type = 1) => {
+      const dow = serialToDate(Math.floor(toSerial(s))).getUTCDay();   // 0 = Sunday
+      type = toNum(type);
+      if (type === 2) return (dow + 6) % 7 + 1;   // Monday = 1
+      if (type === 3) return (dow + 6) % 7;       // Monday = 0
+      return dow + 1;                              // Sunday = 1
+    },
+    DATEDIF: (start, end, unit) => {
+      const a = serialToDate(Math.floor(toSerial(start))), b = serialToDate(Math.floor(toSerial(end)));
+      if (b < a) throw error('#NUM!');
+      const u = toText(unit).toUpperCase();
+      if (u === 'D') return Math.round((b - a) / DAY_MS);
+      let months = (b.getUTCFullYear() - a.getUTCFullYear()) * 12 + b.getUTCMonth() - a.getUTCMonth();
+      if (b.getUTCDate() < a.getUTCDate()) months--;
+      if (u === 'M') return months;
+      if (u === 'Y') return Math.floor(months / 12);
+      throw error('#NUM!');
+    },
+    HOUR: (s) => Math.floor(Math.round((toSerial(s) % 1) * 86400) / 3600) % 24,
+    MINUTE: (s) => Math.floor(Math.round((toSerial(s) % 1) * 86400) % 3600 / 60),
+    SECOND: (s) => Math.round((toSerial(s) % 1) * 86400) % 60,
     YEAR: (s) => serialToDate(s).getUTCFullYear(),
     MONTH: (s) => serialToDate(s).getUTCMonth() + 1,
     DAY: (s) => serialToDate(s).getUTCDate(),
@@ -532,6 +761,64 @@ const Formula = (() => {
       if (n.length < 2) throw error('#DIV/0!');
       const m = n.reduce((x, y) => x + y, 0) / n.length;
       return Math.sqrt(n.reduce((x, y) => x + (y - m) ** 2, 0) / (n.length - 1));
+    },
+    SUMIFS: (sumRange, ...rest) => ifsValues(sumRange, rest).reduce((s, x) => s + x, 0),
+    COUNTIFS: (...a) => ifsMask(a).filter(Boolean).length,
+    AVERAGEIFS: (avgRange, ...rest) => {
+      const v = ifsValues(avgRange, rest);
+      if (!v.length) throw error('#DIV/0!');
+      return v.reduce((s, x) => s + x, 0) / v.length;
+    },
+    MAXIFS: (range, ...rest) => { const v = ifsValues(range, rest); return v.length ? Math.max(...v) : 0; },
+    MINIFS: (range, ...rest) => { const v = ifsValues(range, rest); return v.length ? Math.min(...v) : 0; },
+    SUMPRODUCT: (...a) => {
+      const cols = a.map(r => flatten([as2D(r)]));
+      if (!cols.length || cols.some(c => c.length !== cols[0].length)) throw error('#VALUE!');
+      return cols[0].reduce((s, _, i) => s + cols.reduce((p, c) => p * (typeof c[i] === 'number' ? c[i] : 0), 1), 0);
+    },
+    // XLOOKUP(value, lookup, return, [if_not_found], [match_mode])
+    // match_mode: 0 exact (default), -1 exact or next smaller, 1 exact or next larger, 2 wildcard.
+    XLOOKUP: (value, lookup, ret, notFound, mode = 0) => {
+      const keys = flatten([as2D(lookup)]), vals = flatten([as2D(ret)]);
+      if (keys.length !== vals.length) throw error('#VALUE!');
+      mode = toNum(mode);
+      const filled = (k) => k !== '' && k != null;
+      let hit = -1;
+      if (mode === 2) { const f = makeCriterion(value); hit = keys.findIndex(k => filled(k) && f(k)); }
+      else hit = keys.findIndex(k => filled(k) && looseEq(k, value));
+      if (hit < 0 && (mode === -1 || mode === 1)) {
+        for (let i = 0; i < keys.length; i++) {
+          const k = keys[i];
+          if (!filled(k) || typeRank(k) !== typeRank(value)) continue;
+          const c = compare(k, value);
+          if (mode === -1 ? c < 0 : c > 0) {
+            if (hit < 0 || (mode === -1 ? compare(k, keys[hit]) > 0 : compare(k, keys[hit]) < 0)) hit = i;
+          }
+        }
+      }
+      if (hit >= 0) return vals[hit];
+      if (notFound !== undefined) return notFound;
+      throw error('#N/A');
+    },
+    CHOOSE: (i, ...a) => { i = Math.floor(toNum(i)); if (i < 1 || i > a.length) throw error('#VALUE!'); return a[i - 1]; },
+    XOR: (...a) => flatten(a).filter(x => x !== '').filter(truthy).length % 2 === 1,
+    CEILING: (x, sig = 1) => { x = toNum(x); sig = Math.abs(toNum(sig)); return sig === 0 ? 0 : Math.round(Math.ceil(x / sig - 1e-12) * sig * 1e10) / 1e10; },
+    FLOOR: (x, sig = 1) => { x = toNum(x); sig = Math.abs(toNum(sig)); if (sig === 0) throw error('#DIV/0!'); return Math.round(Math.floor(x / sig + 1e-12) * sig * 1e10) / 1e10; },
+    TRUNC: (x, d = 0) => { const p = Math.pow(10, toNum(d)); return Math.trunc(toNum(x) * p) / p; },
+    SIGN: (x) => Math.sign(toNum(x)),
+    ISEVEN: (x) => Math.trunc(toNum(x)) % 2 === 0,
+    ISODD: (x) => Math.abs(Math.trunc(toNum(x)) % 2) === 1,
+    LARGE: (range, k) => {
+      const n = flattenNums([as2D(range)]).sort((a, b) => b - a);
+      k = Math.floor(toNum(k));
+      if (k < 1 || k > n.length) throw error('#NUM!');
+      return n[k - 1];
+    },
+    SMALL: (range, k) => {
+      const n = flattenNums([as2D(range)]).sort((a, b) => a - b);
+      k = Math.floor(toNum(k));
+      if (k < 1 || k > n.length) throw error('#NUM!');
+      return n[k - 1];
     },
     VAR: (...a) => {
       const n = flattenNums(a);
@@ -618,6 +905,28 @@ const Formula = (() => {
       try { v = evaluate(args[0], env); } catch (e) { v = codeOf(e); }
       const failed = name === 'IFERROR' ? isErr(v) : v === '#N/A';
       return failed ? (args[1] ? evaluate(args[1], env) : '') : v;
+    }
+    if (name === 'IFS') {
+      if (!args.length || args.length % 2) throw error('#VALUE!');
+      for (let i = 0; i < args.length; i += 2) {
+        const cond = scalar(evaluate(args[i], env));
+        if (isErr(cond)) throw error(cond);
+        if (truthy(cond)) return evaluate(args[i + 1], env);
+      }
+      throw error('#N/A');
+    }
+    if (name === 'SWITCH') {
+      // SWITCH(expr, value1, result1, ..., [default])
+      if (args.length < 3) throw error('#VALUE!');
+      const subject = scalar(evaluate(args[0], env));
+      if (isErr(subject)) throw error(subject);
+      const hasDefault = (args.length - 1) % 2 === 1;
+      const end = hasDefault ? args.length - 1 : args.length;
+      for (let i = 1; i < end; i += 2) {
+        if (looseEq(scalar(evaluate(args[i], env)), subject)) return evaluate(args[i + 1], env);
+      }
+      if (hasDefault) return evaluate(args[args.length - 1], env);
+      throw error('#N/A');
     }
     if (name === 'ROW' || name === 'COLUMN') {
       const a = args[0];
@@ -717,7 +1026,7 @@ const Formula = (() => {
     ERRORS, isErr,
     colName, colIndex, keyOf, parseAddr,
     parseLiteral, tokenize, parse, evaluate, shiftRefs,
-    recalcSheet, evalFormula, formatNumber, FUNCS,
+    recalcSheet, evalFormula, formatNumber, formatValue, FUNCS,
   };
 })();
 

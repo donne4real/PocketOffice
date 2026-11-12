@@ -1,5 +1,52 @@
 # Changelog
 
+## v2.1.0 — 2026-11-11
+
+### Calc
+- Range selection (drag, Shift+click, Shift+arrows, column/row headers, Ctrl+A)
+  with Sum / Average / Count in the status bar.
+- Copy, cut and paste as tab-separated text, so blocks move to and from Excel
+  and web tables. Pasting copied cells shifts relative formula references.
+- Cell formatting: bold, italic, underline, alignment, fill and text colour,
+  and number formats (number, currency, percent, date, time, scientific,
+  custom codes). Number formats are kept in `.xlsx` import and export.
+- Sort (by column, header-aware), filter rows by a condition, freeze row 1.
+- About 35 new functions: `SUMIFS`, `COUNTIFS`, `AVERAGEIFS`, `MAXIFS`,
+  `MINIFS`, `IFS`, `SWITCH`, `XLOOKUP`, `CHOOSE`, `SUMPRODUCT`, `DATE`,
+  `EDATE`, `EOMONTH`, `DATEDIF`, `WEEKDAY`, `DAYS`, `TEXTJOIN`, `FIND`,
+  `SEARCH`, `PROPER`, `LARGE`, `SMALL`, and more. `TEXT()` now honours
+  format codes. `NOW()`/`TODAY()` use local time.
+
+### Impress
+- Speaker notes per slide (kept in `.pptx` and `.json`; press N while
+  presenting to show them).
+- Layering (bring forward / send back) and Shift+click multi-select with
+  grouping (Ctrl+G / Ctrl+Shift+G).
+
+### Writer
+- Page breaks (Ctrl+Enter), kept through `.docx`, `.pdf`, print and `.html`.
+- Header and footer text with `{page}`, `{pages}`, `{title}`, `{date}`.
+- Word count of the current selection.
+
+### Reliability
+- Backup button (🛟): one `.zip` of everything, plus plain copies of each
+  document; restore from it later. Storage use is shown.
+- Visible warnings when autosave fails or browser storage is nearly full;
+  the browser is asked to keep the data.
+- The hosted copy works offline and can be installed as an app (service
+  worker + web app manifest).
+
+### Accessibility
+- Dialogs trap focus, close on Escape and give focus back; fields are linked
+  to their labels; arrow keys move between tools, document tabs and slides;
+  every toolbar and button has a name; visible focus ring; improved text
+  contrast; honours "reduce motion".
+
+### Project
+- `release.yml` publishes the standalone file and a zip when a `v*` tag is pushed.
+- CI e2e job runs on Node 22 with the runner's Chrome and builds the
+  standalone file first.
+
 ## v2.0.1 — 2026-09-24
 
 ### Security hardening

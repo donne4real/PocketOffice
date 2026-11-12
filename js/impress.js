@@ -5,9 +5,12 @@
    ========================================================================== */
 
 const Impress = (() => {
-  // Each slide: { bg: '#ffffff', elements: [...] }
+  // Each slide: { bg: '#ffffff', elements: [...], notes?: 'speaker notes' }
   // element: { id, kind:'text'|'rect'|'ellipse'|'image', x,y,w,h (in % of slide),
-  //            text?, fontSize?, fontFamily?, color?, fill?, bold?, italic?, align?, dataUrl? }
+  //            text?, fontSize?, fontFamily?, color?, fill?, bold?, italic?, align?, dataUrl?,
+  //            group?: 'g1' }
+  // The order of `elements` is the stacking order: later ones are drawn on
+  // top. Elements sharing a `group` id select, move and delete together.
   // Multi-deck: each deck owns { id, name, slides, current }. The live
   // `slides`/`current` bindings point at the active deck; unlike Calc, Impress
   // REASSIGNS slides (newDeck, imports…), so decks are re-synced on switch.
@@ -18,7 +21,8 @@ const Impress = (() => {
   let tabs = null;
   let slides = [];
   let current = 0;
-  let selected = null;
+  let selected = null;           // the primary selected element (shown in the inspector)
+  let selectedIds = new Set();   // every selected element, including group members
   let seq = 1;
   let dirty = false;
   let autosaveTimer = null;
@@ -91,11 +95,13 @@ const Impress = (() => {
   // pasted these values into HTML strings, so a crafted .json deck could
   // inject markup.)
   const KINDS = new Set(['text', 'rect', 'ellipse', 'image']);
+  const MAX_NOTES = 20000;   // characters of speaker notes kept per slide
   const IMG_URL = /^data:image\/(png|jpe?g|gif|webp);base64,[A-Za-z0-9+/=\s]*$/;
   function normalizeSlides(list) {
     if (!Array.isArray(list)) return [];
-    return list.filter(sl => sl && typeof sl === 'object').map(sl => ({
+    return list.filter(sl => sl && typeof sl === 'object').map(sl => Object.assign({
       bg: Util.safeColor(sl.bg, '#ffffff'),
+    }, typeof sl.notes === 'string' && sl.notes ? { notes: sl.notes.slice(0, MAX_NOTES) } : null, {
       elements: (Array.isArray(sl.elements) ? sl.elements : []).filter(e => e && KINDS.has(e.kind)).map(e => {
         const el = {
           id: typeof e.id === 'string' ? e.id : '', kind: e.kind,
@@ -111,6 +117,7 @@ const Impress = (() => {
         if (e.fill) el.fill = Util.safeColor(e.fill, '#4a90e2');
         if (e.align === 'left' || e.align === 'center' || e.align === 'right') el.align = e.align;
         if (typeof e.dataUrl === 'string' && IMG_URL.test(e.dataUrl)) el.dataUrl = e.dataUrl;
+        if (typeof e.group === 'string' && /^g\d{1,9}$/.test(e.group)) el.group = e.group;
         return el;
       }),
     }));
@@ -260,13 +267,32 @@ const Impress = (() => {
           </div>
           <div class="impress-slidelist" id="impSlideList" role="listbox" aria-label="Slide list"></div>
         </div>
-        <div class="impress-stage" id="impStage">
-          <div class="impress-canvas" id="impCanvas" tabindex="0" role="img" aria-label="Slide canvas"></div>
+        <div class="impress-main">
+          <div class="impress-stage" id="impStage">
+            <div class="impress-canvas" id="impCanvas" tabindex="0" role="group" aria-label="Slide canvas. Arrow keys move the selected element, Delete removes it."></div>
+          </div>
+          <div class="impress-notes">
+            <label for="impNotes">Speaker notes</label>
+            <textarea id="impNotes" placeholder="Notes for this slide — shown in Present mode (press N) and saved to .pptx"></textarea>
+          </div>
         </div>
         <div class="impress-inspector" id="impInspector"></div>
       </div>
     `;
     $('impAddSlide').onclick = addSlide;
+    // Slide list keyboard: arrows / Enter choose a slide.
+    $('impSlideList').addEventListener('keydown', (e) => {
+      const it = e.target.closest('.impress-slideitem');
+      if (!it || e.target !== it) return;
+      const i = +it.dataset.idx;
+      const to = e.key === 'ArrowDown' ? i + 1 : e.key === 'ArrowUp' ? i - 1 : (e.key === 'Enter' || e.key === ' ') ? i : -1;
+      if (to < 0 || to >= slides.length) return;
+      e.preventDefault();
+      current = to; selected = null;
+      renderSlideList(); renderCanvas();
+      const next = $('impSlideList').querySelector('.impress-slideitem[data-idx="' + to + '"]');
+      if (next) next.focus();
+    });
     $('impSlideList').addEventListener('click', (e) => {
       const it = e.target.closest('.impress-slideitem');
       if (!it) return;
@@ -276,6 +302,16 @@ const Impress = (() => {
       if (e.target.classList.contains('down')){ moveSlide(+it.dataset.idx, 1); return; }
       current = +it.dataset.idx; selected = null;
       renderSlideList(); renderCanvas();
+    });
+    // Speaker notes: one undo step per visit to the box.
+    const notes = $('impNotes');
+    let notesSnapped = false;
+    notes.addEventListener('focus', () => { notesSnapped = false; });
+    notes.addEventListener('input', () => {
+      if (!notesSnapped) { snapshot(); notesSnapped = true; }
+      const v = notes.value.slice(0, MAX_NOTES);
+      if (v) slides[current].notes = v; else delete slides[current].notes;
+      markDirty();
     });
   }
 
@@ -322,7 +358,8 @@ const Impress = (() => {
       item.dataset.idx = i;
       item.setAttribute('role', 'option');
       item.setAttribute('aria-selected', i === current ? 'true' : 'false');
-      item.setAttribute('aria-label', 'Slide ' + (i + 1));
+      item.setAttribute('aria-label', 'Slide ' + (i + 1) + ' of ' + slides.length);
+      item.tabIndex = i === current ? 0 : -1;
       item.innerHTML = `
         <div class="impress-thumb"></div>
         <div class="impress-slidemeta">
@@ -369,18 +406,97 @@ const Impress = (() => {
     const c = $('impCanvas');
     c.innerHTML = '';
     const slide = slides[current];
+    syncSelection();
     c.style.background = slide.bg || '#ffffff';
     slide.elements.forEach(el => {
       const node = makeElementNode(el);
       c.appendChild(node);
     });
+    const notes = $('impNotes');
+    if (notes && notes.value !== (slide.notes || '')) notes.value = slide.notes || '';
     renderInspector();
+  }
+
+  // ---------- Selection, groups, stacking order ----------
+  const els = () => slides[current].elements;
+  const groupMembers = (el) => el.group ? els().filter(x => x.group === el.group) : [el];
+  const selectedEls = () => els().filter(x => selectedIds.has(x.id));
+  // Much of the code just assigns `selected`; bring selectedIds in line with
+  // it (and with the elements that still exist) before every paint.
+  function syncSelection() {
+    const byId = new Map(els().map(x => [x.id, x]));
+    if (!selected || !byId.has(selected)) { selected = null; selectedIds = new Set(); return; }
+    selectedIds = new Set([...selectedIds].filter(id => byId.has(id)));
+    if (!selectedIds.has(selected)) selectedIds = new Set(groupMembers(byId.get(selected)).map(x => x.id));
+  }
+  // Select an element (and its group). additive = Shift+click: add/remove.
+  function selectEl(el, additive) {
+    const ids = groupMembers(el).map(x => x.id);
+    if (!additive) { selectedIds = new Set(ids); selected = el.id; return; }
+    if (selectedIds.has(el.id)) {
+      ids.forEach(id => selectedIds.delete(id));
+      selected = selectedIds.size ? [...selectedIds][selectedIds.size - 1] : null;
+    } else {
+      ids.forEach(id => selectedIds.add(id));
+      selected = el.id;
+    }
+  }
+  function selectAllEls() {
+    if (!els().length) return;
+    selectedIds = new Set(els().map(x => x.id));
+    selected = els()[els().length - 1].id;
+    renderCanvas();
+  }
+  function deleteSelected() {
+    if (!selectedIds.size) return;
+    snapshot();
+    slides[current].elements = els().filter(x => !selectedIds.has(x.id));
+    selected = null; renderCanvas(); renderSlideList(); markDirty();
+  }
+  function groupSelected() {
+    const items = selectedEls();
+    if (items.length < 2) { UI.toast('Select two or more elements first (Shift+click adds to the selection).', 'info'); return; }
+    snapshot();
+    const gid = 'g' + Util.nextSeq(els().map(x => x.group).filter(Boolean), 'g');
+    items.forEach(x => { x.group = gid; });
+    renderCanvas(); markDirty();
+    UI.toast('Grouped ' + items.length + ' elements', 'success');
+  }
+  function ungroupSelected() {
+    const gids = new Set(selectedEls().map(x => x.group).filter(Boolean));
+    if (!gids.size) return;
+    snapshot();
+    els().forEach(x => { if (gids.has(x.group)) delete x.group; });
+    renderCanvas(); markDirty();
+    UI.toast('Ungrouped', 'info');
+  }
+  // Move the selection in the stacking order: 'front' | 'back' | 'forward' | 'backward'.
+  function reorderSelected(mode) {
+    const list = els();
+    const moving = list.filter(x => selectedIds.has(x.id));
+    if (!moving.length) return;
+    const rest = list.filter(x => !selectedIds.has(x.id));
+    const unselectedBelow = (idx) => list.slice(0, idx).filter(x => !selectedIds.has(x.id)).length;
+    let at;
+    if (mode === 'front') at = rest.length;
+    else if (mode === 'back') at = 0;
+    else if (mode === 'forward') at = Math.min(rest.length, unselectedBelow(list.indexOf(moving[moving.length - 1])) + 1);
+    else at = Math.max(0, unselectedBelow(list.indexOf(moving[0])) - 1);
+    const next = rest.slice(0, at).concat(moving, rest.slice(at));
+    if (next.every((x, i) => x === list[i])) return;
+    snapshot();
+    slides[current].elements = next;
+    renderCanvas(); renderSlideList(); markDirty();
   }
 
   function makeElementNode(el) {
     const node = document.createElement('div');
-    node.className = 'imp-el' + (selected === el.id ? ' selected' : '');
+    node.className = 'imp-el' + (selectedIds.has(el.id) ? ' selected' : '');
     node.dataset.id = el.id;
+    node.setAttribute('role', 'img');
+    node.setAttribute('aria-label', (el.kind === 'text' ? 'Text: ' + String(el.text || '').slice(0, 80)
+      : el.kind === 'rect' ? 'Rectangle' : el.kind === 'ellipse' ? 'Ellipse' : 'Image') +
+      (selectedIds.has(el.id) ? ', selected' : ''));
     node.style.left = el.x + '%';
     node.style.top = el.y + '%';
     node.style.width = el.w + '%';
@@ -433,17 +549,23 @@ const Impress = (() => {
         if (e.target.classList.contains('imp-resize')) {
           const rect = c.getBoundingClientRect();
           drag = { mode: 'resize', el, rect, snapped: false };
+        } else if (e.shiftKey) {
+          selectEl(el, true);
+          renderCanvas();
         } else {
-          selected = el.id;
+          // Pressing on something already selected keeps the whole selection,
+          // so several elements (or a group) can be dragged together.
+          if (selectedIds.has(el.id)) selected = el.id; else selectEl(el, false);
           const rect = c.getBoundingClientRect();
           drag = {
             mode: 'move', el, rect,
             startMx: e.clientX, startMy: e.clientY,
-            startEx: el.x, startEy: el.y,
+            items: selectedEls().map(x => ({ el: x, x: x.x, y: x.y })),
             snapped: false,
           };
           renderCanvas();
         }
+        c.focus({ preventScroll: true });
         e.preventDefault();
       } else {
         // Click on empty canvas — deselect
@@ -460,21 +582,24 @@ const Impress = (() => {
       if (drag.mode === 'move') {
         const dxPct = (e.clientX - drag.startMx) / rect.width * 100;
         const dyPct = (e.clientY - drag.startMy) / rect.height * 100;
-        el.x = Math.max(-50, Math.min(100, drag.startEx + dxPct));
-        el.y = Math.max(-50, Math.min(100, drag.startEy + dyPct));
+        for (const it of drag.items) {
+          it.el.x = Math.max(-50, Math.min(100, it.x + dxPct));
+          it.el.y = Math.max(-50, Math.min(100, it.y + dyPct));
+        }
       } else if (drag.mode === 'resize') {
         const wPct = (e.clientX - (rect.left + el.x/100*rect.width)) / rect.width * 100;
         const hPct = (e.clientY - (rect.top + el.y/100*rect.height)) / rect.height * 100;
         el.w = Math.max(2, wPct);
         el.h = Math.max(2, hPct);
       }
-      // live update the node
-      const node = c.querySelector(`.imp-el[data-id="${el.id}"]`);
-      if (node) {
-        node.style.left = el.x + '%';
-        node.style.top = el.y + '%';
-        node.style.width = el.w + '%';
-        node.style.height = el.h + '%';
+      // live update the nodes
+      for (const m of (drag.mode === 'move' ? drag.items.map(it => it.el) : [el])) {
+        const node = c.querySelector(`.imp-el[data-id="${m.id}"]`);
+        if (!node) continue;
+        node.style.left = m.x + '%';
+        node.style.top = m.y + '%';
+        node.style.width = m.w + '%';
+        node.style.height = m.h + '%';
       }
     });
     document.addEventListener('mouseup', () => {
@@ -493,25 +618,44 @@ const Impress = (() => {
     // Keyboard: delete selected, arrow keys nudge
     let nudgeCoalesce = 0;
     c.addEventListener('keydown', (e) => {
+      const mod = e.ctrlKey || e.metaKey;
+      const k = e.key.toLowerCase();
+      if (mod && !e.altKey && k === 'a') { e.preventDefault(); selectAllEls(); return; }
+      // Tab walks through the elements, so the canvas works without a mouse.
+      if (e.key === 'Tab' && els().length && !mod && !e.altKey) {
+        const i = els().findIndex(x => x.id === selected);
+        const j = i + (e.shiftKey ? -1 : 1);
+        if (j < 0 || j >= els().length) { if (selected) { selected = null; renderCanvas(); } return; }   // let focus leave the canvas
+        e.preventDefault();
+        selectEl(els()[j], false);
+        renderCanvas();
+        return;
+      }
       if (!selected) return;
       const el = slides[current].elements.find(x => x.id === selected);
       if (!el) return;
+      if (mod && !e.altKey && k === 'g') { e.preventDefault(); if (e.shiftKey) ungroupSelected(); else groupSelected(); return; }
+      if (mod && !e.altKey && (e.key === ']' || e.key === '}')) { e.preventDefault(); reorderSelected(e.shiftKey ? 'front' : 'forward'); return; }
+      if (mod && !e.altKey && (e.key === '[' || e.key === '{')) { e.preventDefault(); reorderSelected(e.shiftKey ? 'back' : 'backward'); return; }
+      if (e.key === 'Escape') { selected = null; renderCanvas(); return; }
+      if (e.key === 'Enter' && el.kind === 'text') { e.preventDefault(); editText(el); return; }
       if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault();
-        snapshot();
-        slides[current].elements = slides[current].elements.filter(x => x.id !== selected);
-        selected = null; renderCanvas(); renderSlideList(); markDirty();
+        deleteSelected();
       } else if (e.key.startsWith('Arrow')) {
         e.preventDefault();
         // Coalesce rapid arrow nudges into one undo entry (~800ms window).
         const now = Date.now();
         if (now - nudgeCoalesce > 800) { snapshot(); nudgeCoalesce = now; }
         const d = e.shiftKey ? 5 : 1;
-        if (e.key === 'ArrowLeft') el.x -= d;
-        if (e.key === 'ArrowRight') el.x += d;
-        if (e.key === 'ArrowUp') el.y -= d;
-        if (e.key === 'ArrowDown') el.y += d;
+        for (const m of selectedEls()) {
+          if (e.key === 'ArrowLeft') m.x -= d;
+          if (e.key === 'ArrowRight') m.x += d;
+          if (e.key === 'ArrowUp') m.y -= d;
+          if (e.key === 'ArrowDown') m.y += d;
+        }
         renderCanvas(); markDirty();
+        c.focus({ preventScroll: true });
       }
     });
   }
@@ -546,13 +690,13 @@ const Impress = (() => {
   function renderInspector() {
     const ins = $('impInspector');
     if (!selected) {
-      ins.innerHTML = `<div class="imp-noinspect">No element selected.<br><br>Click an element to edit it, or use the toolbar to add text, shapes, or images.</div>`;
+      ins.innerHTML = `<div class="imp-noinspect">No element selected.<br><br>Click an element to edit it, or use the toolbar to add text, shapes, or images.<br><br>Shift+click selects several elements, which can then be grouped.</div>`;
       return;
     }
     const el = slides[current].elements.find(x => x.id === selected);
     if (!el) { selected = null; renderInspector(); return; }
     ins.innerHTML = `
-      <div class="imp-inspecthead">${KINDS.has(el.kind) ? el.kind.toUpperCase() : ''}</div>
+      <div class="imp-inspecthead">${KINDS.has(el.kind) ? el.kind.toUpperCase() : ''}${selectedIds.size > 1 ? ` · ${selectedIds.size} selected` : ''}${el.group ? ' · grouped' : ''}</div>
       <div class="imp-field"><label>Left</label><input type="number" id="iX" value="${num1(el.x)}"></div>
       <div class="imp-field"><label>Top</label><input type="number" id="iY" value="${num1(el.y)}"></div>
       <div class="imp-field"><label>Width</label><input type="number" id="iW" value="${num1(el.w)}"></div>
@@ -578,8 +722,25 @@ const Impress = (() => {
       ${(el.kind === 'rect' || el.kind === 'ellipse') ? `
         <div class="imp-field"><label>Fill</label><input type="color" id="iFill" value="${Util.safeColor(el.fill, '#4a90e2')}"></div>
       ` : ''}
-      <button class="tb-btn w-100 text-danger" id="iDelete">🗑 Delete element</button>
+      <div class="imp-field"><label>Arrange</label>
+        <div class="imp-arrange">
+          <button class="tb-btn" id="iFront" title="Bring to front (Ctrl+Shift+])" aria-label="Bring to front">⤒ Front</button>
+          <button class="tb-btn" id="iForward" title="Bring forward (Ctrl+])" aria-label="Bring forward">↑</button>
+          <button class="tb-btn" id="iBackward" title="Send backward (Ctrl+[)" aria-label="Send backward">↓</button>
+          <button class="tb-btn" id="iBack" title="Send to back (Ctrl+Shift+[)" aria-label="Send to back">⤓ Back</button>
+        </div>
+      </div>
+      ${selectedIds.size > 1 && !selectedEls().every(x => x.group && x.group === el.group) ? '<button class="tb-btn w-100" id="iGroup" title="Group (Ctrl+G)">⧉ Group selected</button>' : ''}
+      ${selectedEls().some(x => x.group) ? '<button class="tb-btn w-100" id="iUngroup" title="Ungroup (Ctrl+Shift+G)">Ungroup</button>' : ''}
+      <button class="tb-btn w-100 text-danger" id="iDelete">🗑 Delete ${selectedIds.size > 1 ? selectedIds.size + ' elements' : 'element'}</button>
     `;
+    ins.querySelector('#iFront').onclick = () => reorderSelected('front');
+    ins.querySelector('#iForward').onclick = () => reorderSelected('forward');
+    ins.querySelector('#iBackward').onclick = () => reorderSelected('backward');
+    ins.querySelector('#iBack').onclick = () => reorderSelected('back');
+    const iGroup = ins.querySelector('#iGroup'); if (iGroup) iGroup.onclick = groupSelected;
+    const iUngroup = ins.querySelector('#iUngroup'); if (iUngroup) iUngroup.onclick = ungroupSelected;
+    UI.linkLabels(ins);
     const bindNum = (id, prop) => { const e = ins.querySelector(id); if (e) e.onchange = () => { el[prop] = +e.value; renderCanvas(); renderSlideList(); markDirty(); }; };
     bindNum('#iX','x'); bindNum('#iY','y'); bindNum('#iW','w'); bindNum('#iH','h');
     const iFont = ins.querySelector('#iFont'); if (iFont) iFont.onchange = () => { el.fontFamily = iFont.value || undefined; renderCanvas(); renderSlideList(); markDirty(); };
@@ -590,11 +751,7 @@ const Impress = (() => {
     const iItalic = ins.querySelector('#iItalic'); if (iItalic) iItalic.onchange = () => { el.italic = iItalic.checked; renderCanvas(); markDirty(); };
     const iFill = ins.querySelector('#iFill'); if (iFill) iFill.oninput = () => { el.fill = iFill.value; renderCanvas(); renderSlideList(); markDirty(); };
     const iEditText = ins.querySelector('#iEditText'); if (iEditText) iEditText.onclick = () => editText(el);
-    ins.querySelector('#iDelete').onclick = () => {
-      snapshot();
-      slides[current].elements = slides[current].elements.filter(x => x.id !== selected);
-      selected = null; renderCanvas(); renderSlideList(); markDirty();
-    };
+    ins.querySelector('#iDelete').onclick = deleteSelected;
     // Snapshot once when any inspector input is focused, so a whole field edit
     // is a single undo entry regardless of which property changes.
     let insSnapped = false;
@@ -698,8 +855,9 @@ const Impress = (() => {
         });
       if (!slideFiles.length) { UI.toast('No slides found in file', 'warn'); return; }
 
-      // Build a relationship map for each slide (to resolve images).
+      // Build a relationship map for each slide (to resolve images and notes).
       const slideRels = {};
+      const slideNotes = {};   // slide number -> path of its notes part
       for (const sf of slideFiles) {
         const num = sf.match(/slide(\d+)\.xml/)[1];
         const relPath = `ppt/slides/_rels/slide${num}.xml.rels`;
@@ -707,10 +865,15 @@ const Impress = (() => {
         if (relFile) {
           const relXml = await relFile.async('string');
           const map = {};
-          // Each Relationship: <Relationship Id="rId1" Target="media/image1.png"/>
-          const re = /<Relationship\s+Id="([^"]+)"\s+Type="[^"]*"\s+Target="([^"]+)"/g;
+          // Each Relationship: <Relationship Id="rId1" Type="…/image" Target="../media/image1.png"/>
+          // (attribute order varies between writers, so read them one by one).
+          const re = /<Relationship\b([^>]*)>/g;
           let m;
-          while ((m = re.exec(relXml))) map[m[1]] = m[2];
+          while ((m = re.exec(relXml))) {
+            const a = (name) => { const x = new RegExp('\\b' + name + '="([^"]*)"').exec(m[1]); return x ? x[1] : ''; };
+            if (a('Id')) map[a('Id')] = a('Target');
+            if (/\/notesSlide$/.test(a('Type'))) slideNotes[num] = a('Target').replace(/^\.\.\//, 'ppt/');
+          }
           slideRels[num] = map;
         }
       }
@@ -720,7 +883,16 @@ const Impress = (() => {
       for (const sf of slideFiles) {
         const xml = await zip.file(sf).async('string');
         const doc = parser.parseFromString(xml, 'application/xml');
-        newSlides.push(parseSlide(doc, zip, slideRels[sf.match(/slide(\d+)/)[1]] || {}));
+        const num = sf.match(/slide(\d+)/)[1];
+        const slide = parseSlide(doc, zip, slideRels[num] || {});
+        const notesFile = slideNotes[num] && zip.file(slideNotes[num]);
+        if (notesFile) {
+          try {
+            const notes = parseNotes(parser.parseFromString(await notesFile.async('string'), 'application/xml'));
+            if (notes) slide.notes = notes;
+          } catch (e) { /* notes are optional */ }
+        }
+        newSlides.push(slide);
       }
       // Second pass: resolve image placeholders (need async reads).
       for (const s of newSlides) {
@@ -744,6 +916,17 @@ const Impress = (() => {
     } catch (e) {
       UI.toast(`Could not read ${f.name}: ${e.message || e}`, 'error');
     }
+  }
+
+  // Speaker notes live in the notes page's "body" placeholder, one <a:p> per line.
+  function parseNotes(doc) {
+    const all = (root, ln) => [...root.getElementsByTagName('*')].filter(n => n.localName === ln);
+    for (const sp of all(doc.documentElement, 'sp')) {
+      const ph = all(sp, 'ph')[0];
+      if (!ph || ph.getAttribute('type') !== 'body') continue;
+      return all(sp, 'p').map(para => all(para, 't').map(t => t.textContent).join('')).join('\n').trim();
+    }
+    return '';
   }
 
   function parseSlide(doc, zip, rels) {
@@ -923,24 +1106,39 @@ const Impress = (() => {
   function startPresent() {
     const overlay = document.createElement('div');
     overlay.id = 'impPresent';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-label', 'Presentation');
     overlay.innerHTML = `<div class="imp-pres-slide"></div>
+      <div class="imp-pres-notes hidden" id="presNotes" aria-live="polite"></div>
       <div class="imp-pres-controls">
-        <button id="presPrev">◀</button>
+        <button id="presPrev" title="Previous slide (←)" aria-label="Previous slide">◀</button>
         <span id="presCount"></span>
-        <button id="presNext">▶</button>
-        <button id="presExit">✕ Exit</button>
+        <button id="presNext" title="Next slide (→)" aria-label="Next slide">▶</button>
+        <button id="presNotesBtn" class="wide" title="Show or hide speaker notes (N)" aria-pressed="false">📝 Notes</button>
+        <button id="presExit" class="wide" title="Exit (Esc)">✕ Exit</button>
       </div>`;
     document.body.appendChild(overlay);
     let idx = current;
     const slideEl = overlay.querySelector('.imp-pres-slide');
     const countEl = overlay.querySelector('#presCount');
+    const notesEl = overlay.querySelector('#presNotes');
+    const notesBtn = overlay.querySelector('#presNotesBtn');
+    let showNotes = false;
     function show() {
       const s = slides[idx];
       slideEl.style.background = s.bg || '#fff';
       slideEl.innerHTML = '';
       s.elements.forEach(el => slideEl.appendChild(presentEl(el)));
       countEl.textContent = (idx + 1) + ' / ' + slides.length;
+      notesEl.textContent = s.notes || '(No notes for this slide)';
+      notesEl.classList.toggle('hidden', !showNotes);
     }
+    function toggleNotes() {
+      showNotes = !showNotes;
+      notesBtn.setAttribute('aria-pressed', showNotes ? 'true' : 'false');
+      show();
+    }
+    notesBtn.onclick = toggleNotes;
     function nav(d) { idx = Math.max(0, Math.min(slides.length - 1, idx + d)); show(); }
     overlay.querySelector('#presPrev').onclick = () => nav(-1);
     overlay.querySelector('#presNext').onclick = () => nav(1);
@@ -948,6 +1146,7 @@ const Impress = (() => {
     function onKey(e) {
       if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') nav(1);
       else if (e.key === 'ArrowLeft' || e.key === 'PageUp') nav(-1);
+      else if (e.key === 'n' || e.key === 'N') toggleNotes();
       else if (e.key === 'Escape') close();
     }
     document.addEventListener('keydown', onKey);
@@ -985,8 +1184,9 @@ const Impress = (() => {
   async function saveJson() {
     try {
       // Strip transient fields, keep only editable props.
-      const clean = slides.map(s => ({
+      const clean = slides.map(s => Object.assign({
         bg: s.bg || '#ffffff',
+      }, s.notes ? { notes: s.notes } : null, {
         elements: (s.elements || []).map(el => {
           const e = { id: el.id, kind: el.kind, x: el.x, y: el.y, w: el.w, h: el.h };
           if (el.text != null) e.text = el.text;
@@ -998,6 +1198,7 @@ const Impress = (() => {
           if (el.fill) e.fill = el.fill;
           if (el.align) e.align = el.align;
           if (el.dataUrl) e.dataUrl = el.dataUrl;
+          if (el.group) e.group = el.group;
           return e;
         }),
       }));
@@ -1071,6 +1272,7 @@ const Impress = (() => {
       for (const s of slides) {
         const slide = p.addSlide();
         slide.background = { color: hexNo(s.bg || '#ffffff') };
+        if (s.notes) slide.addNotes(s.notes);
         for (const el of s.elements) {
           const opts = { x: IN(el.x), y: INH(el.y), w: IN(el.w), h: INH(el.h) };
           if (el.kind === 'text') {

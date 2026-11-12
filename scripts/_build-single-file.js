@@ -76,7 +76,19 @@ function patchCsp(html) {
     .replace(/font-src 'self';/, `font-src 'self' data:;`);
 }
 
-let html = inlineCss(srcHtml);
+// A single file has no siblings: embed the icon, and drop the web-app
+// manifest and touch icon (installing as an app needs the hosted copy).
+function inlineIcon(html) {
+  const svg = fs.readFileSync(path.join(ROOT, 'icons', 'icon.svg'));
+  const out = html
+    .replace(/[ \t]*<link rel="manifest"[^>]*>\r?\n?/, '')
+    .replace(/[ \t]*<link rel="apple-touch-icon"[^>]*>\r?\n?/, '')
+    .replace('<link rel="icon" href="icons/icon.svg"', '<link rel="icon" href="data:image/svg+xml;base64,' + svg.toString('base64') + '"');
+  if (/rel="manifest"|href="icons\//.test(out)) throw new Error('index.html: icon/manifest links not in the expected form');
+  return out;
+}
+
+let html = inlineCss(inlineIcon(srcHtml));
 html = inlineScripts(html);
 html = inlineFonts(html);
 // The HTML spec normalizes \r\n and lone \r to \n while parsing (including
